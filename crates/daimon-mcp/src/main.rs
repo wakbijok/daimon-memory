@@ -24,10 +24,12 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use uuid::Uuid;
 
+mod mcp;
+
 #[derive(Clone)]
-struct AppState {
-    store: Arc<PgStore>,
-    default_tenant: Uuid,
+pub(crate) struct AppState {
+    pub(crate) store: Arc<PgStore>,
+    pub(crate) default_tenant: Uuid,
 }
 
 #[tokio::main]
@@ -53,7 +55,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/v1/memory", post(store_h))
         .route("/v1/recall", post(recall_h))
         .route("/v1/read", get(read_h))
-        .route("/mcp", post(mcp))
+        .route("/mcp", post(mcp::handle))
         .with_state(state);
 
     let addr: SocketAddr = bind.parse()?;
@@ -168,9 +170,3 @@ async fn read_h(
     }
 }
 
-async fn mcp() -> impl IntoResponse {
-    (
-        StatusCode::NOT_IMPLEMENTED,
-        Json(json!({"detail": "streamable-HTTP /mcp JSON-RPC wiring in progress (next slice)"})),
-    )
-}
