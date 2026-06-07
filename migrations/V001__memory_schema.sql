@@ -1,4 +1,4 @@
--- daimon-memory — initial schema (standalone deployment, dedicated database).
+-- daimon-memory - initial schema (standalone deployment, dedicated database).
 -- In the dAImon monorepo this corresponds to the SDS "V017" delta; standalone on a
 -- fresh DB it is V001. Postgres 17 (gen_random_uuid is in core; no pgcrypto needed).
 --
@@ -6,12 +6,12 @@
 --  - Postgres is the CANONICAL source of truth; Qdrant is a rebuildable index.
 --  - Tenant isolation via RLS (fail-closed: unset GUC -> zero rows).
 --  - Recall ranks on the L0 `abstract`; full content is `body` (L2). (L1 overview +
---    a separate chunks table are deferred — see SDS §3.3; MVP folds tiers onto records.)
+--    a separate chunks table are deferred - see SDS §3.3; MVP folds tiers onto records.)
 
 CREATE SCHEMA IF NOT EXISTS memory;
 
 -- ---------------------------------------------------------------------------
--- type_registry — the canonical taxonomy + the extensibility surface (SDS §3.8).
+-- type_registry - the canonical taxonomy + the extensibility surface (SDS §3.8).
 -- Canonical kinds are global (tenant_id NULL); consumers may register custom
 -- per-tenant types without a migration.
 -- ---------------------------------------------------------------------------
@@ -40,7 +40,7 @@ INSERT INTO memory.type_registry (record_type, write_mode, is_canonical) VALUES
 ON CONFLICT DO NOTHING;
 
 -- ---------------------------------------------------------------------------
--- records — canonical content (SDS §3.2). One row per memory.
+-- records - canonical content (SDS §3.2). One row per memory.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS memory.records (
     id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -81,7 +81,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS records_dedup_active
     ON memory.records (tenant_id, content_sha) WHERE status = 'active';
 
 -- ---------------------------------------------------------------------------
--- namespaces — the browseable URI tree (SDS §3.5).
+-- namespaces - the browseable URI tree (SDS §3.5).
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS memory.namespaces (
     tenant_id     UUID NOT NULL,
@@ -92,7 +92,7 @@ CREATE TABLE IF NOT EXISTS memory.namespaces (
 );
 
 -- ---------------------------------------------------------------------------
--- index_outbox — transactional outbox PG -> Qdrant (SDS §7.3). Drained by the
+-- index_outbox - transactional outbox PG -> Qdrant (SDS §7.3). Drained by the
 -- singleton indexer. Never a synchronous dual-write.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS memory.index_outbox (
@@ -109,7 +109,7 @@ CREATE INDEX IF NOT EXISTS outbox_unprocessed_idx
     ON memory.index_outbox (created_at) WHERE processed_at IS NULL;
 
 -- ---------------------------------------------------------------------------
--- Row-Level Security — tenant isolation, FAIL-CLOSED.
+-- Row-Level Security - tenant isolation, FAIL-CLOSED.
 -- The app sets `SET app.tenant_id = '<uuid>'` per session; unset -> NULL -> no rows.
 -- ---------------------------------------------------------------------------
 ALTER TABLE memory.records    ENABLE ROW LEVEL SECURITY;

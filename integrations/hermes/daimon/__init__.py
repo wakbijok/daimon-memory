@@ -61,7 +61,7 @@ DAIMON_REMEMBER_SCHEMA = {
     "name": "daimon_remember",
     "description": (
         "Persist a durable, TYPED memory to daimon-memory (shared across tools). "
-        "Use for decisions, runbooks, lessons, conventions — not chit-chat. The "
+        "Use for decisions, runbooks, lessons, conventions - not chit-chat. The "
         "control layer validates required fields per kind and rejects malformed writes.\n"
         f"kinds: {_KINDS}.\n"
         "Required fields by kind: decision={context,rationale}; runbook={steps}; "
@@ -95,7 +95,7 @@ DAIMON_RECALL_SCHEMA = {
     "name": "daimon_recall",
     "description": (
         "Search daimon-memory (hybrid keyword + semantic, no LLM). Returns ranked hits "
-        "with daimon:// uris. Recall also runs automatically each turn — use this for "
+        "with daimon:// uris. Recall also runs automatically each turn - use this for "
         "explicit, targeted lookups."
     ),
     "parameters": {
@@ -224,7 +224,7 @@ class DaimonMemoryProvider(MemoryProvider):
     # -- lifecycle -----------------------------------------------------------
 
     def is_available(self) -> bool:
-        # No network — just config presence (per ABC contract).
+        # No network - just config presence (per ABC contract).
         return bool(os.environ.get("DAIMON_ENDPOINT"))
 
     def initialize(self, session_id: str, **kwargs) -> None:
@@ -287,14 +287,14 @@ class DaimonMemoryProvider(MemoryProvider):
             if len(abstract) > 240:
                 abstract = abstract[:240] + "…"
             uri = h.get("uri", "")
-            lines.append(f"- ({kind}) {title} — {abstract} [{uri}]")
+            lines.append(f"- ({kind}) {title} - {abstract} [{uri}]")
         return "\n".join(lines)
 
     # -- capture: CURATED only, never raw turns ------------------------------
 
     def sync_turn(self, user_content, assistant_content, *, session_id="", messages=None) -> None:
         # Intentional no-op: daimon-memory does NOT ingest raw conversation turns.
-        # Capture is curated — via on_memory_write (mirroring Hermes's own memory
+        # Capture is curated - via on_memory_write (mirroring Hermes's own memory
         # writes) and the explicit daimon_remember tool. This keeps our LLM
         # requirement at zero (no extraction VLM on the daimon side).
         return
@@ -410,5 +410,5 @@ class DaimonMemoryProvider(MemoryProvider):
 
 
 def register(ctx) -> None:
-    """Plugin entry point — discovered by Hermes's memory-provider loader."""
+    """Plugin entry point - discovered by Hermes's memory-provider loader."""
     ctx.register_memory_provider(DaimonMemoryProvider())
