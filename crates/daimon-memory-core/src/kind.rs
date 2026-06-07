@@ -29,11 +29,17 @@ pub enum MemoryKind {
     ProjectConvention,
     AgentLesson,
     ResourceSummary,
+    /// The agent's identity/voice/boundaries (the hook-injected instruction layer).
+    Persona,
+    /// Tenant-wide behavioral / save discipline (numbered operating rules).
+    Protocol,
+    /// A follow-up with a due date.
+    Reminder,
 }
 
 impl MemoryKind {
     /// All canonical kinds (registry iteration / validation self-tests).
-    pub const ALL: [MemoryKind; 9] = [
+    pub const ALL: [MemoryKind; 12] = [
         MemoryKind::Decision,
         MemoryKind::Runbook,
         MemoryKind::IncidentSummary,
@@ -43,6 +49,9 @@ impl MemoryKind {
         MemoryKind::ProjectConvention,
         MemoryKind::AgentLesson,
         MemoryKind::ResourceSummary,
+        MemoryKind::Persona,
+        MemoryKind::Protocol,
+        MemoryKind::Reminder,
     ];
 
     /// snake_case wire form (also the URI `record_type` segment).
@@ -57,6 +66,9 @@ impl MemoryKind {
             MemoryKind::ProjectConvention => "project_convention",
             MemoryKind::AgentLesson => "agent_lesson",
             MemoryKind::ResourceSummary => "resource_summary",
+            MemoryKind::Persona => "persona",
+            MemoryKind::Protocol => "protocol",
+            MemoryKind::Reminder => "reminder",
         }
     }
 
@@ -74,11 +86,14 @@ impl MemoryKind {
             | MemoryKind::IncidentSummary
             | MemoryKind::KnownFailureMode
             | MemoryKind::RemediationPattern
-            | MemoryKind::AgentLesson => WriteMode::Append,
+            | MemoryKind::AgentLesson
+            | MemoryKind::Reminder => WriteMode::Append,
             MemoryKind::Runbook
             | MemoryKind::ServiceTopology
             | MemoryKind::ProjectConvention
-            | MemoryKind::ResourceSummary => WriteMode::Update,
+            | MemoryKind::ResourceSummary
+            | MemoryKind::Persona
+            | MemoryKind::Protocol => WriteMode::Update,
         }
     }
 
@@ -95,6 +110,9 @@ impl MemoryKind {
             MemoryKind::ProjectConvention => &["rule"],
             MemoryKind::AgentLesson => &["lesson"],
             MemoryKind::ResourceSummary => &["source"],
+            MemoryKind::Persona => &["identity", "voice", "boundaries"],
+            MemoryKind::Protocol => &["scope", "rules"],
+            MemoryKind::Reminder => &["due"],
         }
     }
 }
@@ -122,6 +140,9 @@ mod tests {
     fn write_modes_are_assigned() {
         assert_eq!(MemoryKind::Decision.write_mode(), WriteMode::Append);
         assert_eq!(MemoryKind::ServiceTopology.write_mode(), WriteMode::Update);
+        assert_eq!(MemoryKind::Persona.write_mode(), WriteMode::Update);
+        assert_eq!(MemoryKind::Protocol.write_mode(), WriteMode::Update);
+        assert_eq!(MemoryKind::Reminder.write_mode(), WriteMode::Append);
     }
 
     #[test]

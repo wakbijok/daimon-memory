@@ -51,7 +51,7 @@ fn tool_definitions() -> Value {
                     "type": "object",
                     "required": ["kind", "namespace", "title", "body"],
                     "properties": {
-                        "kind": {"type": "string", "description": "decision|runbook|incident_summary|service_topology|known_failure_mode|remediation_pattern|project_convention|agent_lesson|resource_summary"},
+                        "kind": {"type": "string", "description": "decision|runbook|incident_summary|service_topology|known_failure_mode|remediation_pattern|project_convention|agent_lesson|resource_summary|persona|protocol|reminder"},
                         "namespace": {"type": "string", "description": "e.g. shared-canonical/coding/decisions"},
                         "title": {"type": "string"},
                         "body": {"type": "string"},

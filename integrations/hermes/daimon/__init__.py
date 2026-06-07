@@ -54,7 +54,8 @@ def _get_httpx():
 
 _KINDS = (
     "decision, runbook, incident_summary, service_topology, known_failure_mode, "
-    "remediation_pattern, project_convention, agent_lesson, resource_summary"
+    "remediation_pattern, project_convention, agent_lesson, resource_summary, "
+    "persona, protocol, reminder"
 )
 
 DAIMON_REMEMBER_SCHEMA = {
@@ -67,7 +68,8 @@ DAIMON_REMEMBER_SCHEMA = {
         "Required fields by kind: decision={context,rationale}; runbook={steps}; "
         "incident_summary={impact,resolution}; service_topology={service,dependencies}; "
         "known_failure_mode={symptom,cause}; remediation_pattern={problem,fix}; "
-        "project_convention={rule}; agent_lesson={lesson}; resource_summary={source}."
+        "project_convention={rule}; agent_lesson={lesson}; resource_summary={source}; "
+        "persona={identity,voice,boundaries}; protocol={scope,rules}; reminder={due}."
     ),
     "parameters": {
         "type": "object",
