@@ -82,6 +82,69 @@ fn tool_definitions() -> Value {
                     "required": ["uri"],
                     "properties": {"uri": {"type": "string"}}
                 }
+            },
+            {
+                "name": "log_decision",
+                "description": "Persist a non-obvious DECISION (chose A over B). State what was rejected. Call the moment a real choice is made.",
+                "inputSchema": {"type": "object", "required": ["title", "context", "rationale"], "properties": {
+                    "title": {"type": "string"},
+                    "context": {"type": "string", "description": "the situation that prompted the choice"},
+                    "rationale": {"type": "string", "description": "why this option; trade-offs; what was rejected"},
+                    "body": {"type": "string", "description": "optional full detail; defaults to context + rationale"},
+                    "namespace": {"type": "string", "description": "default shared-canonical/coding/decisions"},
+                    "importance": {"type": "integer", "minimum": 0, "maximum": 100}
+                }}
+            },
+            {
+                "name": "log_lesson",
+                "description": "Persist a reusable LESSON or a corrected mistake. Call immediately when corrected or when you learn something not to repeat.",
+                "inputSchema": {"type": "object", "required": ["title", "lesson"], "properties": {
+                    "title": {"type": "string"},
+                    "lesson": {"type": "string", "description": "the reusable insight, phrased so it prevents the mistake next time"},
+                    "body": {"type": "string"},
+                    "namespace": {"type": "string", "description": "default shared-canonical/lessons"},
+                    "importance": {"type": "integer", "minimum": 0, "maximum": 100}
+                }}
+            },
+            {
+                "name": "log_incident",
+                "description": "Persist an INCIDENT / failure (regression, rollback, outage, data loss, wasted effort). No blame. Ask the user before logging if unsure.",
+                "inputSchema": {"type": "object", "required": ["title", "impact", "resolution"], "properties": {
+                    "title": {"type": "string"},
+                    "impact": {"type": "string", "description": "what was lost or affected"},
+                    "resolution": {"type": "string", "description": "how it was resolved"},
+                    "severity": {"type": "string", "description": "optional: minor|moderate|major"},
+                    "prevention": {"type": "string", "description": "optional: specific action to prevent recurrence"},
+                    "body": {"type": "string"},
+                    "namespace": {"type": "string", "description": "default shared-canonical/incidents"},
+                    "importance": {"type": "integer", "minimum": 0, "maximum": 100}
+                }}
+            },
+            {
+                "name": "add_reminder",
+                "description": "Persist a dated FOLLOW-UP / next-session item.",
+                "inputSchema": {"type": "object", "required": ["title", "due"], "properties": {
+                    "title": {"type": "string"},
+                    "due": {"type": "string", "description": "absolute date or datetime, e.g. 2026-06-15"},
+                    "body": {"type": "string"},
+                    "namespace": {"type": "string", "description": "default shared-canonical/reminders"},
+                    "importance": {"type": "integer", "minimum": 0, "maximum": 100}
+                }}
+            },
+            {
+                "name": "browse",
+                "description": "List memory uris under a namespace prefix. Use before saving to avoid duplicates, or to explore what exists.",
+                "inputSchema": {"type": "object", "required": ["prefix"], "properties": {
+                    "prefix": {"type": "string", "description": "e.g. shared-canonical/coding/decisions"}
+                }}
+            },
+            {
+                "name": "forget",
+                "description": "Retract a memory by uri (marks it forgotten). Records in a *-private namespace forget freely; shared-canonical records require confirm=true.",
+                "inputSchema": {"type": "object", "required": ["uri"], "properties": {
+                    "uri": {"type": "string"},
+                    "confirm": {"type": "boolean", "description": "must be true to forget a shared-canonical record"}
+                }}
             }
         ]
     })
@@ -199,6 +262,117 @@ async fn call_tool(st: &AppState, headers: &HeaderMap, id: &Value, params: &Valu
                 Err(e) => ok(id, tool_err(format!("{e}"))),
             }
         }
+        "log_decision" => {
+            let mut f = serde_json::Map::new();
+            f.insert("context".into(), Value::String(sarg(&args, "context")));
+            f.insert("rationale".into(), Value::String(sarg(&args, "rationale")));
+            let body = body_or(&args, &format!("{}\n\n{}", sarg(&args, "context"), sarg(&args, "rationale")));
+            do_store(st, &scope, id, MemoryKind::Decision, ns_or(&args, "shared-canonical/coding/decisions"), sarg(&args, "title"), body, f, imp(&args)).await
+        }
+        "log_lesson" => {
+            let mut f = serde_json::Map::new();
+            f.insert("lesson".into(), Value::String(sarg(&args, "lesson")));
+            let body = body_or(&args, &sarg(&args, "lesson"));
+            do_store(st, &scope, id, MemoryKind::AgentLesson, ns_or(&args, "shared-canonical/lessons"), sarg(&args, "title"), body, f, imp(&args)).await
+        }
+        "log_incident" => {
+            let mut f = serde_json::Map::new();
+            f.insert("impact".into(), Value::String(sarg(&args, "impact")));
+            f.insert("resolution".into(), Value::String(sarg(&args, "resolution")));
+            let sev = sarg(&args, "severity");
+            if !sev.is_empty() {
+                f.insert("severity".into(), Value::String(sev));
+            }
+            let prev = sarg(&args, "prevention");
+            if !prev.is_empty() {
+                f.insert("prevention".into(), Value::String(prev));
+            }
+            let body = body_or(&args, &format!("{}\n\n{}", sarg(&args, "impact"), sarg(&args, "resolution")));
+            do_store(st, &scope, id, MemoryKind::IncidentSummary, ns_or(&args, "shared-canonical/incidents"), sarg(&args, "title"), body, f, imp(&args)).await
+        }
+        "add_reminder" => {
+            let mut f = serde_json::Map::new();
+            f.insert("due".into(), Value::String(sarg(&args, "due")));
+            let body = body_or(&args, &sarg(&args, "title"));
+            do_store(st, &scope, id, MemoryKind::Reminder, ns_or(&args, "shared-canonical/reminders"), sarg(&args, "title"), body, f, imp(&args)).await
+        }
+        "browse" => {
+            let prefix = sarg(&args, "prefix");
+            match st.store.list(&scope, &prefix).await {
+                Ok(uris) => ok(
+                    id,
+                    tool_text(if uris.is_empty() {
+                        "(no records under this prefix)".to_string()
+                    } else {
+                        uris.iter().map(|u| u.to_string()).collect::<Vec<_>>().join("\n")
+                    }),
+                ),
+                Err(e) => ok(id, tool_err(format!("{e}"))),
+            }
+        }
+        "forget" => {
+            let uri_s = sarg(&args, "uri");
+            let confirm = args.get("confirm").and_then(|c| c.as_bool()).unwrap_or(false);
+            if !uri_s.contains("-private/") && !confirm {
+                return ok(
+                    id,
+                    tool_err("refusing to forget a shared-canonical record without confirm=true".to_string()),
+                );
+            }
+            match MemoryUri::parse(&uri_s) {
+                Ok(u) => match st.store.forget(&scope, &u).await {
+                    Ok(()) => ok(id, tool_text(format!("forgotten: {uri_s}"))),
+                    Err(e) => ok(id, tool_err(format!("{e}"))),
+                },
+                Err(e) => ok(id, tool_err(format!("{e}"))),
+            }
+        }
         other => err(id, -32602, &format!("unknown tool: {other}")),
+    }
+}
+
+fn sarg(args: &Value, k: &str) -> String {
+    args.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string()
+}
+fn imp(args: &Value) -> u8 {
+    args.get("importance").and_then(|i| i.as_u64()).unwrap_or(0) as u8
+}
+fn ns_or(args: &Value, default: &str) -> String {
+    let n = args.get("namespace").and_then(|v| v.as_str()).unwrap_or("");
+    if n.is_empty() { default.to_string() } else { n.to_string() }
+}
+fn body_or(args: &Value, default: &str) -> String {
+    let b = sarg(args, "body");
+    if b.is_empty() { default.to_string() } else { b }
+}
+
+/// Build a [`MemoryWrite`] from a fixed kind + named fields and store it.
+/// Shared by the guided `log_*` / `add_reminder` tools.
+#[allow(clippy::too_many_arguments)]
+async fn do_store(
+    st: &AppState,
+    scope: &ContextScope,
+    id: &Value,
+    kind: MemoryKind,
+    namespace: String,
+    title: String,
+    body: String,
+    fields: serde_json::Map<String, Value>,
+    importance: u8,
+) -> Value {
+    let w = MemoryWrite {
+        kind,
+        namespace,
+        title,
+        body,
+        fields,
+        source_refs: vec![],
+        tags: vec![],
+        importance,
+        confidence: 1.0,
+    };
+    match st.store.store(scope, w).await {
+        Ok(uri) => ok(id, tool_text(format!("stored: {uri}"))),
+        Err(e) => ok(id, tool_err(format!("{e}"))),
     }
 }

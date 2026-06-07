@@ -14,7 +14,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use daimon_memory_core::{
     ContextMemory, ContextScope, MemoryError, MemoryHit, MemoryKind, MemoryRecord, MemoryUri,
-    MemoryWrite, Namespace, RecallFilters, Result, validate_write,
+    MemoryWrite, Namespace, RecallFilters, Result, WriteMode, validate_write,
 };
 use deadpool_postgres::{Config as DpConfig, ManagerConfig, Pool, RecyclingMethod, Runtime};
 use sha2::{Digest, Sha256};
@@ -161,6 +161,30 @@ impl ContextMemory for PgStore {
             let uri: String = r.get(0);
             tx.commit().await.map_err(backend)?;
             return MemoryUri::parse(&uri);
+        }
+
+        // Update-mode kinds keep current state: supersede the prior active record(s) for the
+        // same subject (namespace + kind + title) and enqueue their removal from the vector
+        // index, so an edited persona/protocol/runbook does not leave a stale duplicate.
+        if write.kind.write_mode() == WriteMode::Update {
+            let superseded = tx
+                .query(
+                    "UPDATE memory.records SET status='superseded', updated_at=now()
+                     WHERE tenant_id=$1 AND namespace=$2 AND kind=$3 AND title=$4 AND status='active'
+                     RETURNING id",
+                    &[&tenant, &write.namespace, &write.kind.as_str(), &write.title],
+                )
+                .await
+                .map_err(backend)?;
+            for row in &superseded {
+                let sid: Uuid = row.get("id");
+                tx.execute(
+                    "INSERT INTO memory.index_outbox (record_id, tenant_id, op) VALUES ($1,$2,'delete')",
+                    &[&sid, &tenant],
+                )
+                .await
+                .map_err(backend)?;
+            }
         }
 
         let id = Uuid::new_v4();

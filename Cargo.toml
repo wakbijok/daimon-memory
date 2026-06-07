@@ -26,6 +26,8 @@ refinery = { version = "0.9", features = ["tokio-postgres"] }
 qdrant-client = "1.18"
 axum = "0.8"
 sha2 = "0.10"
+# HTTP client (daimon-cli persona wizard posts to the REST endpoint); rustls = no system openssl
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 
 # internal
 daimon-memory-core = { path = "crates/daimon-memory-core" }

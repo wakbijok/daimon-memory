@@ -51,9 +51,10 @@ async fn main() -> Result<()> {
         "reindex" => reindex().await,
         "health" => health().await,
         "stats" => stats().await,
+        "persona" => persona().await,
         other => {
             eprintln!(
-                "daimon {} - usage: daimon <migrate|reindex|health|stats>",
+                "daimon {} - usage: daimon <migrate|reindex|health|stats|persona>",
                 if other.is_empty() { "(no command)" } else { other }
             );
             std::process::exit(2);
@@ -177,6 +178,83 @@ async fn stats() -> Result<()> {
         }))?
     );
     Ok(())
+}
+
+fn prompt_line(prompt: &str, default: &str) -> String {
+    use std::io::Write;
+    print!("  {prompt}");
+    if !default.is_empty() {
+        print!(" [{default}]");
+    }
+    print!(": ");
+    let _ = std::io::stdout().flush();
+    let mut s = String::new();
+    let _ = std::io::stdin().read_line(&mut s);
+    let s = s.trim();
+    if s.is_empty() {
+        default.to_string()
+    } else {
+        s.to_string()
+    }
+}
+
+/// Interactive persona wizard (the ov-style management surface). Prompts for the AI's
+/// identity + the user's profile and writes ONE `persona` record to
+/// shared-canonical/system/persona via the REST API, the single sanctioned writer of the
+/// persona kind. Config: DAIMON_ENDPOINT (default http://127.0.0.1:8080), DAIMON_TENANT.
+async fn persona() -> Result<()> {
+    let endpoint = std::env::var("DAIMON_ENDPOINT")
+        .unwrap_or_else(|_| "http://127.0.0.1:8080".to_string())
+        .trim_end_matches('/')
+        .to_string();
+    let tenant = std::env::var("DAIMON_TENANT")
+        .unwrap_or_else(|_| "00000000-0000-0000-0000-0000000000d1".to_string());
+    let default_user = std::env::var("USER").unwrap_or_default();
+
+    println!("daimon persona setup  ->  {endpoint}");
+    println!("Defines the shared identity every connected tool adopts at session start.\n");
+    let ai_name = prompt_line("AI name (how it refers to itself)", "Assistant");
+    let role = prompt_line("AI role (what it helps you do)", "collaborative partner");
+    let voice = prompt_line("Voice / tone", "direct, concise, technical; challenges weak ideas");
+    let avoid = prompt_line("What it must NOT do", "no hype, no hedging, no fabricated context");
+    let user_name = prompt_line("Your name (how the AI addresses you)", &default_user);
+    let user_job = prompt_line("Your work / role", "");
+    let boundaries = prompt_line(
+        "Hard boundaries",
+        "never read private dirs; never modify credentials without approval; persist memory only via daimon-memory",
+    );
+
+    let identity = format!("I am {ai_name}, {user_name}'s {role}. Not the base model.");
+    let voice_full = format!("{voice}. Avoid: {avoid}.");
+    let body = format!(
+        "# Operator Persona\n\nI am {ai_name}, {user_name}'s {role}. Not the base model.\n\n\
+         ## Voice\n{voice}\n\n## What I do not do\n{avoid}\n\n\
+         ## User\n- Name: {user_name}\n- Work: {user_job}\n\n## Boundaries\n{boundaries}"
+    );
+    let record = json!({
+        "kind": "persona",
+        "namespace": "shared-canonical/system/persona",
+        "title": "Operator Persona",
+        "body": body,
+        "fields": { "identity": identity, "voice": voice_full, "boundaries": boundaries },
+        "tags": ["persona", "system"],
+        "importance": 95
+    });
+
+    let resp = reqwest::Client::new()
+        .post(format!("{endpoint}/v1/memory"))
+        .header("x-daimon-tenant", &tenant)
+        .json(&record)
+        .send()
+        .await?;
+    let status = resp.status();
+    let txt = resp.text().await.unwrap_or_default();
+    if status.is_success() {
+        println!("\npersona saved -> {txt}");
+        Ok(())
+    } else {
+        anyhow::bail!("persona write failed ({status}): {txt}");
+    }
 }
 
 fn to_anyhow(e: daimon_memory_core::MemoryError) -> anyhow::Error {
