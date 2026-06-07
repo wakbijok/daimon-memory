@@ -153,18 +153,23 @@ cd integrations/hermes
 ```
 Uninstall: `./install.sh --uninstall`.
 
-### Claude Code (via MCP)
+### Claude Code (plugin) ✅
 
-Add daimon-memory as an MCP server (for example in `.mcp.json`):
+A Claude Code plugin (distributed as a marketplace) that auto-recalls relevant + recent memory
+into every prompt (**hot memory**, via a `UserPromptSubmit` hook), plus `remember`/`recall`/`read`
+tools and a `/daimon` command.
 
-```json
-{ "mcpServers": {
-    "daimon-memory": {
-      "type": "http",
-      "url": "http://localhost:8080/mcp",
-      "headers": { "X-Daimon-Tenant": "<your-tenant-uuid>" }
-} } }
+```bash
+cd integrations/claude-code
+./install.sh                 # guided: prompts for endpoint + tenant; writes Claude Code settings env
 ```
+Then inside Claude Code, add the marketplace and install:
+```
+/plugin marketplace add <abs-path>/integrations/claude-code
+/plugin install daimon-memory@daimon-memory
+```
+Restart Claude Code. (The hot-memory recall runs over REST, so it works even if the MCP tools are
+still being wired.)
 
 ### Codex (via MCP)
 
@@ -203,7 +208,7 @@ The server and indexer are configured via environment variables:
 
 **Working today:** typed control-layer writes · deterministic keyword recall · semantic recall (bge-small + Qdrant) · hybrid RRF fusion · the outbox-to-Qdrant indexer · REST + MCP surfaces · ops CLI · the Hermes integration.
 
-**Planned:** bearer-token auth mapped to a tenant · a least-privilege DB role so RLS is the active enforcer · streamable-HTTP `/mcp` (SSE) · a **shared identity/persona layer** (one consistent assistant persona across tools) · dedicated Claude Code and Codex installers.
+**Planned:** bearer-token auth mapped to a tenant · a least-privilege DB role so RLS is the active enforcer · streamable-HTTP `/mcp` (SSE) · a **shared identity/persona layer** (one consistent assistant persona across tools) · a dedicated Codex installer (Hermes and Claude Code are done).
 
 ## Contributing
 

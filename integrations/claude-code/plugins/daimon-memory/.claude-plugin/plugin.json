@@ -1,0 +1,13 @@
+{
+  "name": "daimon-memory",
+  "version": "0.1.0",
+  "description": "Shared cross-tool memory for Claude Code, backed by daimon-memory. Auto-recalls relevant + recent memory into each prompt (hot memory) and exposes remember/recall/read tools. Deterministic recall, curated capture.",
+  "author": {
+    "name": "the daimon-memory authors"
+  },
+  "license": "MIT",
+  "keywords": ["memory", "semantic-search", "cross-tool", "recall", "daimon"],
+  "mcpServers": "./.mcp.json",
+  "hooks": "./hooks/hooks.json",
+  "commands": ["./commands/daimon.md"]
+}

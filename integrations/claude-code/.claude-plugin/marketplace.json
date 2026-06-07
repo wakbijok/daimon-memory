@@ -1,0 +1,17 @@
+{
+  "name": "daimon-memory",
+  "owner": {
+    "name": "the daimon-memory authors"
+  },
+  "description": "daimon-memory: shared, cross-tool semantic memory for Claude Code.",
+  "plugins": [
+    {
+      "name": "daimon-memory",
+      "source": "./plugins/daimon-memory",
+      "description": "Auto-recall relevant + recent memory into every prompt (hot memory), plus remember/recall/read tools. Deterministic recall, curated capture, backed by daimon-memory.",
+      "version": "0.1.0",
+      "license": "MIT",
+      "keywords": ["memory", "semantic-search", "cross-tool", "recall", "daimon"]
+    }
+  ]
+}
