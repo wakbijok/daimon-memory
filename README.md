@@ -25,9 +25,11 @@ Full specification: `daimon-docs/daimon-memory/sds/daimon-memory-sds.md`
 | Crate / dir | Role | Status |
 |-------------|------|--------|
 | `crates/daimon-memory-core` | deterministic, LLM-free core: types, taxonomy, namespace/URI grammar, control-layer validation, `ContextMemory` trait | ✅ green, unit-tested |
-| `crates/daimon-mcp` | cross-tool server: streamable-HTTP `/mcp` + REST `/v1`; stateless | 🟡 skeleton (health + control-layer validation; persistence next) |
+| `crates/daimon-pg` | Postgres-backed `ContextMemory`: validated store (dedup + outbox) + deterministic full-text recall; tenant-scoped | ✅ proven live |
+| `crates/daimon-vec` | fastembed bge-small (384-d) embedder + Qdrant `VectorStore` (tenant-filtered) | ✅ proven live |
+| `crates/daimon-indexer` | singleton outbox drainer: PG `index_outbox` → embed → Qdrant upsert/delete | ✅ proven live |
+| `crates/daimon-mcp` | cross-tool server: REST `/v1` + MCP JSON-RPC `/mcp`; **hybrid recall** (RRF of keyword + semantic); stateless | ✅ proven live |
 | `migrations/V001__memory_schema.sql` | Postgres schema (records, namespaces, type_registry, outbox, RLS) | ✅ |
-| `crates/daimon-pg` (next) | Postgres-backed `ContextMemory` (store + FTS recall) | ⏳ |
 | `crates/daimon-cli` (next) | ops: migrate / reindex / backup / admin | ⏳ |
 
 ## Build & test
@@ -45,5 +47,9 @@ and the app `Deployment` is flipped from `replicas: 0` once the image exists.
 
 ## Status
 
-Phase 1 (autonomous build, 2026-06-07): core + schema + control-layer + server skeleton are
-green; Postgres store + deterministic recall wiring is the next slice.
+Phase 1 **feature-complete** (autonomous build, 2026-06-07), proven live against the deployed
+data tier: typed control-layer store, deterministic keyword recall, **semantic recall**
+(bge-small + Qdrant), **hybrid RRF fusion**, the outbox→Qdrant indexer, and the REST + MCP
+surfaces. Remaining for go-live: build + publish the image (CI runner), then flip the app from
+`replicas: 0`. Next code slices: streamable-HTTP `/mcp` SSE, bearer-auth→tenant, a non-superuser
+DB role so RLS is the active enforcer.
