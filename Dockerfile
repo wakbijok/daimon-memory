@@ -4,13 +4,17 @@
 # Builder uses the FULL rust image (build-essential, pkg-config, perl) + cmake/protoc
 # for the -sys crates (aws-lc, prost/tonic). Runtime carries the ONNX runtime deps
 # (libgomp1, libstdc++6) that fastembed/ort need at startup.
-FROM rust:1.94 AS builder
+# bookworm builder so the binary's glibc matches the bookworm-slim runtime below
+# (the default rust:1.94 is trixie-based -> glibc 2.38, which bookworm-slim lacks).
+FROM rust:1.94-slim-bookworm AS builder
 # Cap parallelism so the homelab build node doesn't OOM on the ort/tonic codegen.
 ENV CARGO_BUILD_JOBS=2 \
     CARGO_PROFILE_RELEASE_DEBUG=false
 WORKDIR /app
+# slim base -> install all build deps explicitly (cc, openssl, cmake, protoc).
 RUN apt-get update \
- && apt-get install -y --no-install-recommends cmake protobuf-compiler \
+ && apt-get install -y --no-install-recommends \
+      build-essential cmake pkg-config protobuf-compiler libssl-dev \
  && rm -rf /var/lib/apt/lists/*
 COPY Cargo.toml Cargo.lock* ./
 COPY crates ./crates
