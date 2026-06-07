@@ -6,7 +6,12 @@
 //! later slice; this synchronous JSON-RPC is what most clients exercise for tool use.
 
 use crate::AppState;
-use axum::{Json, extract::State, http::HeaderMap, response::IntoResponse};
+use axum::{
+    Json,
+    extract::State,
+    http::{HeaderMap, StatusCode},
+    response::{IntoResponse, Response},
+};
 use daimon_memory_core::{
     ContextMemory, ContextScope, MemoryKind, MemoryUri, MemoryWrite, RecallFilters,
 };
@@ -86,27 +91,39 @@ pub async fn handle(
     State(st): State<AppState>,
     headers: HeaderMap,
     Json(req): Json<Value>,
-) -> impl IntoResponse {
+) -> Response {
+    // A JSON-RPC notification has no `id` (e.g. notifications/initialized). The streamable-HTTP
+    // transport requires 202 Accepted with an EMPTY body for these - NOT a JSON response.
+    // Lenient clients tolerate a `null` body; strict ones (Codex's rmcp) close the channel.
+    if req.get("id").is_none() {
+        return StatusCode::ACCEPTED.into_response();
+    }
+
     let id = req.get("id").cloned().unwrap_or(Value::Null);
     let method = req.get("method").and_then(|m| m.as_str()).unwrap_or("");
     let params = req.get("params").cloned().unwrap_or(Value::Null);
 
-    let resp = match method {
-        "initialize" => ok(
+    if method == "initialize" {
+        // Assign a session id (streamable-HTTP). We are stateless, so we never require it back.
+        let session = Uuid::new_v4().to_string();
+        let body = ok(
             &id,
             json!({
                 "protocolVersion": PROTOCOL_VERSION,
                 "capabilities": {"tools": {}},
                 "serverInfo": {"name": "daimon-memory", "version": env!("CARGO_PKG_VERSION")}
             }),
-        ),
-        "notifications/initialized" | "initialized" => return Json(Value::Null),
+        );
+        return ([("mcp-session-id", session)], Json(body)).into_response();
+    }
+
+    let resp = match method {
         "ping" => ok(&id, json!({})),
         "tools/list" => ok(&id, tool_definitions()),
         "tools/call" => call_tool(&st, &headers, &id, &params).await,
         _ => err(&id, -32601, "method not found"),
     };
-    Json(resp)
+    Json(resp).into_response()
 }
 
 async fn call_tool(st: &AppState, headers: &HeaderMap, id: &Value, params: &Value) -> Value {
