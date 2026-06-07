@@ -14,7 +14,7 @@ No raw-turn dumping, no extraction VLM on our side. Hermes does its small-scope
 extraction; we persist the result as a typed, deterministic record.
 
 Config (env, set by the installer into ~/.hermes/.env):
-  DAIMON_ENDPOINT   (required)  e.g. http://10.100.30.27  or  http://127.0.0.1:18080
+  DAIMON_ENDPOINT   (required)  e.g. http://localhost:8080  or  http://localhost:8080
   DAIMON_TENANT     (optional)  tenant UUID; default the dev tenant
   DAIMON_NAMESPACE  (optional)  default capture namespace; default hermes-private/notes
   DAIMON_API_KEY    (optional)  bearer token, if daimon-mcp auth is enabled
@@ -381,7 +381,7 @@ class DaimonMemoryProvider(MemoryProvider):
         return [
             {
                 "key": "endpoint",
-                "description": "daimon-memory base URL (e.g. http://10.100.30.27)",
+                "description": "daimon-memory base URL (e.g. http://localhost:8080)",
                 "required": True,
                 "env_var": "DAIMON_ENDPOINT",
             },
