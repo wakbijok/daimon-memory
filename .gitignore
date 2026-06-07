@@ -3,6 +3,7 @@
 *.pdb
 .env
 .env.*
+!.env.example
 *.secret
 /secrets
 .DS_Store
