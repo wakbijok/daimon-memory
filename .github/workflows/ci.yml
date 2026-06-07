@@ -1,0 +1,23 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install build deps (cmake + protoc for -sys crates)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends cmake protobuf-compiler
+      - uses: Swatinem/rust-cache@v2
+      - name: Test
+        run: cargo test --workspace --locked
+      - name: Build (release binaries)
+        run: cargo build --release --bin daimon-mcp --bin daimon-indexer --bin daimon
