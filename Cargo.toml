@@ -29,3 +29,4 @@ sha2 = "0.10"
 
 # internal
 daimon-memory-core = { path = "crates/daimon-memory-core" }
+daimon-pg = { path = "crates/daimon-pg" }
