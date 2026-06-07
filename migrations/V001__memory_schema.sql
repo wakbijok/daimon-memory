@@ -17,13 +17,14 @@ CREATE SCHEMA IF NOT EXISTS memory;
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS memory.type_registry (
     record_type   TEXT        NOT NULL,
-    tenant_id     UUID,                 -- NULL = global canonical type
+    -- zero-uuid = global canonical type (PK can't use COALESCE; a NOT NULL default does the job).
+    tenant_id     UUID        NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000'::uuid,
     json_schema   JSONB       NOT NULL DEFAULT '{}'::jsonb,
     write_mode    TEXT        NOT NULL CHECK (write_mode IN ('append','update')),
     is_canonical  BOOLEAN     NOT NULL DEFAULT FALSE,
     version       INT         NOT NULL DEFAULT 1,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY (record_type, COALESCE(tenant_id, '00000000-0000-0000-0000-000000000000'::uuid))
+    PRIMARY KEY (record_type, tenant_id)
 );
 
 INSERT INTO memory.type_registry (record_type, write_mode, is_canonical) VALUES
