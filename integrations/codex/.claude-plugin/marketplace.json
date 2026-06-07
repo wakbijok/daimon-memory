@@ -1,0 +1,6 @@
+{
+  "name": "daimon-memory",
+  "plugins": [
+    { "name": "daimon-memory", "source": "./plugins/daimon-memory" }
+  ]
+}

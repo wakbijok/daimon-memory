@@ -1,0 +1,18 @@
+{
+  "name": "daimon-memory",
+  "version": "0.1.0",
+  "description": "Shared cross-tool memory for Codex, backed by daimon-memory. Recall relevant + recent memory on UserPromptSubmit (hot memory); remember/recall/read MCP tools. Deterministic recall, curated capture.",
+  "author": { "name": "the daimon-memory authors" },
+  "license": "MIT",
+  "keywords": ["memory", "semantic-search", "cross-tool", "recall", "daimon", "codex"],
+  "hooks": "./hooks/hooks.json",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "daimon-memory",
+    "shortDescription": "Shared cross-tool memory for Codex",
+    "longDescription": "Auto-recalls relevant + recent shared memory into each prompt from daimon-memory (deterministic hybrid keyword+semantic, zero-LLM), and exposes remember/recall/read tools. The same memory backend as the Hermes and Claude Code integrations.",
+    "developerName": "daimon-memory",
+    "category": "Productivity",
+    "capabilities": ["Memory recall", "Recent-context injection", "Manual memory storage"]
+  }
+}

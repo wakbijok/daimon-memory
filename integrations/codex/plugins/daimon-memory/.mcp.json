@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "daimon": {
+      "url": "__DAIMON_MCP_URL__"
+    }
+  }
+}

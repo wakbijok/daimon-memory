@@ -171,15 +171,18 @@ Then inside Claude Code, add the marketplace and install:
 Restart Claude Code. (The hot-memory recall runs over REST, so it works even if the MCP tools are
 still being wired.)
 
-### Codex (via MCP)
+### Codex (plugin) ✅
 
-Add it to your Codex MCP configuration:
+A Codex plugin (Codex is a full plugin host with hooks + a `codex plugin` CLI): auto-recalls
+memory into each prompt plus the `remember`/`recall`/`read` MCP tools. The installer is fully
+automated (no in-app step).
 
-```toml
-[mcp_servers.daimon-memory]
-url = "http://localhost:8080/mcp"
-transport = "http"
+```bash
+cd integrations/codex
+./install.sh                                              # guided
+./install.sh --endpoint http://localhost:8080 --yes      # non-interactive
 ```
+Restart Codex. Verify with `codex plugin list | grep daimon`.
 
 > Dedicated installers for Claude Code and Codex (with passive-capture hooks, like the Hermes one) are on the [roadmap](#status--roadmap). Memories live in daimon-memory independently of any tool, so uninstalling a tool never deletes your memory.
 
@@ -208,7 +211,7 @@ The server and indexer are configured via environment variables:
 
 **Working today:** typed control-layer writes · deterministic keyword recall · semantic recall (bge-small + Qdrant) · hybrid RRF fusion · the outbox-to-Qdrant indexer · REST + MCP surfaces · ops CLI · the Hermes integration.
 
-**Planned:** bearer-token auth mapped to a tenant · a least-privilege DB role so RLS is the active enforcer · streamable-HTTP `/mcp` (SSE) · a **shared identity/persona layer** (one consistent assistant persona across tools) · a dedicated Codex installer (Hermes and Claude Code are done).
+**Planned:** bearer-token auth mapped to a tenant · a least-privilege DB role so RLS is the active enforcer · streamable-HTTP `/mcp` (SSE) · a **shared identity/persona layer** (one consistent assistant persona across tools) · memory consolidation/decay. Hermes, Claude Code, and Codex integrations are all done.
 
 ## Contributing
 
