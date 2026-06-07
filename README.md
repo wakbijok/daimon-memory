@@ -88,10 +88,22 @@ A Rust workspace (edition 2024):
 
 ## Quick start
 
-The fastest path is Docker Compose — it brings up PostgreSQL, Qdrant, the API server, and the indexer, and applies the schema:
+There are **two installers**: one for the **server** (this section) and one per **client tool**
+([below](#connect-your-tools)). Both are interactive wizards — they explain and prompt for each
+setting.
+
+Run the guided server installer — it asks how you want to run daimon-memory, prompts for each
+value, writes `.env`, and starts the stack:
 
 ```bash
 git clone <repo-url> && cd daimon-memory
+./install.sh
+```
+
+Prefer to do it by hand? Use Docker Compose directly:
+
+```bash
+cp .env.example .env      # edit as needed
 docker compose up --build
 ```
 
@@ -135,8 +147,9 @@ A first-class Hermes memory provider: **automatic recall** on every turn plus **
 
 ```bash
 cd integrations/hermes
-./install.sh --endpoint http://localhost:8080            # install + configure
-./install.sh --endpoint http://localhost:8080 --activate # also make daimon the active provider
+./install.sh                 # guided: prompts for endpoint, tenant, namespace, activation
+# or non-interactive:
+./install.sh --endpoint http://localhost:8080 --activate --yes
 ```
 Uninstall: `./install.sh --uninstall`.
 

@@ -1,15 +1,16 @@
 # daimon-memory — full local stack: Postgres + Qdrant + API server + indexer.
-#   docker compose up --build
-# First build compiles the Rust workspace (slow once); first server start downloads
-# the embedding model (~130 MB once). The API is then on http://localhost:8080.
+#   ./install.sh            # guided setup (writes .env), then starts this
+#   docker compose up --build   # or run directly (uses .env / the defaults below)
 #
-# NOTE: the credentials below are insecure dev defaults — change them for any real use.
+# Config comes from .env (see .env.example). First build compiles the Rust workspace
+# (slow once); first server start downloads the embedding model (~130 MB once).
+# NOTE: the default password below is an insecure dev default — set DAIMON_PG_PASSWORD.
 
 x-db-env: &db-env
   PGHOST: postgres
   PGPORT: "5432"
   PGUSER: daimon
-  PGPASSWORD: daimon
+  PGPASSWORD: ${DAIMON_PG_PASSWORD:-daimon}
   PGDATABASE: daimon_memory
   DAIMON_QDRANT_URL: http://qdrant:6334
   RUST_LOG: info
@@ -19,7 +20,7 @@ services:
     image: postgres:17
     environment:
       POSTGRES_USER: daimon
-      POSTGRES_PASSWORD: daimon
+      POSTGRES_PASSWORD: ${DAIMON_PG_PASSWORD:-daimon}
       POSTGRES_DB: daimon_memory
     volumes:
       - pgdata:/var/lib/postgresql/data
@@ -49,8 +50,9 @@ services:
     environment:
       <<: *db-env
       DAIMON_MCP_BIND: 0.0.0.0:8080
+      DAIMON_DEFAULT_TENANT: ${DAIMON_DEFAULT_TENANT:-00000000-0000-0000-0000-0000000000d1}
     ports:
-      - "8080:8080"
+      - "${DAIMON_PORT:-8080}:8080"
     depends_on:
       postgres:
         condition: service_healthy
