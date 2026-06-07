@@ -7,7 +7,5 @@
   },
   "license": "MIT",
   "keywords": ["memory", "semantic-search", "cross-tool", "recall", "daimon"],
-  "mcpServers": "./.mcp.json",
-  "hooks": "./hooks/hooks.json",
-  "commands": ["./commands/daimon.md"]
+  "mcpServers": "./.mcp.json"
 }
