@@ -1,11 +1,11 @@
-//! `daimon` — ops CLI for daimon-memory.
+//! `daimon` - ops CLI for daimon-memory.
 //!
 //! Subcommands:
-//! - `migrate` — apply embedded SQL migrations (refinery) to Postgres.
-//! - `reindex` — rebuild the entire Qdrant index from Postgres (the "Qdrant is
+//! - `migrate` - apply embedded SQL migrations (refinery) to Postgres.
+//! - `reindex` - rebuild the entire Qdrant index from Postgres (the "Qdrant is
 //!   rebuildable from the canonical store" guarantee, made real).
-//! - `health`  — ping Postgres + Qdrant.
-//! - `stats`   — record counts by kind + pending outbox + Qdrant point count.
+//! - `health`  - ping Postgres + Qdrant.
+//! - `stats`   - record counts by kind + pending outbox + Qdrant point count.
 //!
 //! Config via libpq env (PGHOST/PGPORT/PGUSER/PGPASSWORD/PGDATABASE) + DAIMON_QDRANT_URL.
 
@@ -53,7 +53,7 @@ async fn main() -> Result<()> {
         "stats" => stats().await,
         other => {
             eprintln!(
-                "daimon {} — usage: daimon <migrate|reindex|health|stats>",
+                "daimon {} - usage: daimon <migrate|reindex|health|stats>",
                 if other.is_empty() { "(no command)" } else { other }
             );
             std::process::exit(2);

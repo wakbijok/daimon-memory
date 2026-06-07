@@ -1,4 +1,4 @@
-//! daimon-indexer — the singleton outbox drainer (SDS v0.2 §8.7).
+//! daimon-indexer - the singleton outbox drainer (SDS v0.2 §8.7).
 //!
 //! Drains `memory.index_outbox` (written transactionally by the store) → embeds the
 //! record's L0 abstract → upserts/deletes the Qdrant point → marks the row processed.
@@ -109,7 +109,7 @@ async fn drain_batch(pool: &Pool, store: &VectorStore, embedder: &Embedder) -> a
                     });
                     store.upsert(record_id, vector, payload).await.map_err(to_anyhow)?;
                 }
-                // if the record is gone/forgotten, nothing to index — still mark processed.
+                // if the record is gone/forgotten, nothing to index - still mark processed.
             }
             "delete" => {
                 // best-effort: the point may not exist.

@@ -29,7 +29,7 @@ RUN apt-get update \
 COPY --from=builder /app/migrations /app/migrations
 # Both binaries: daimon-mcp (API server) + daimon-indexer (outbox->Qdrant singleton).
 # The indexer Deployment overrides the entrypoint with `command: ["daimon-indexer"]`.
-# NOTE: the embedder downloads bge-small (~130MB) from HF on first run — the pod needs
+# NOTE: the embedder downloads bge-small (~130MB) from HF on first run - the pod needs
 # egress, or bake the model cache into the image in a follow-up.
 COPY --from=builder /app/target/release/daimon-mcp /usr/local/bin/daimon-mcp
 COPY --from=builder /app/target/release/daimon-indexer /usr/local/bin/daimon-indexer

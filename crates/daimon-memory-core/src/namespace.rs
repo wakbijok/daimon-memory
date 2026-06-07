@@ -7,11 +7,11 @@ use uuid::Uuid;
 /// Namespace root (SDS A.2). Reserved roots plus `<consumer>-private`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NamespaceRoot {
-    /// `shared-canonical/` — the shared team brain (control-gated writes).
+    /// `shared-canonical/` - the shared team brain (control-gated writes).
     SharedCanonical,
-    /// `<consumer>-private/` — per-consumer scratch (e.g. `izu-private`).
+    /// `<consumer>-private/` - per-consumer scratch (e.g. `izu-private`).
     ConsumerPrivate(String),
-    /// `session/` — ephemeral, TTL'd.
+    /// `session/` - ephemeral, TTL'd.
     Session,
 }
 

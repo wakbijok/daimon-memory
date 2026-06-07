@@ -1,10 +1,10 @@
-# daimon-memory — full local stack: Postgres + Qdrant + API server + indexer.
+# daimon-memory - full local stack: Postgres + Qdrant + API server + indexer.
 #   ./install.sh            # guided setup (writes .env), then starts this
 #   docker compose up --build   # or run directly (uses .env / the defaults below)
 #
 # Config comes from .env (see .env.example). First build compiles the Rust workspace
 # (slow once); first server start downloads the embedding model (~130 MB once).
-# NOTE: the default password below is an insecure dev default — set DAIMON_PG_PASSWORD.
+# NOTE: the default password below is an insecure dev default - set DAIMON_PG_PASSWORD.
 
 x-db-env: &db-env
   PGHOST: postgres

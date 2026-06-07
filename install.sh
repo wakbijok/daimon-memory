@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================================
-# daimon-memory — interactive installer for the MEMORY BACKEND (server).
+# daimon-memory - interactive installer for the MEMORY BACKEND (server).
 #
 # Run with no args for a guided setup:   ./install.sh
 # It asks how you want to run daimon-memory, prompts for each config value (with
@@ -25,7 +25,7 @@ dim()  { printf '\033[2m%s\033[0m\n' "$*"; }
 hr()   { printf -- '----------------------------------------------------------------\n'; }
 is_tty() { [ -t 0 ] && [ -t 1 ]; }
 
-# ask <var> <prompt> <default>   — prompts (interactive) or uses default
+# ask <var> <prompt> <default>   - prompts (interactive) or uses default
 ask() {
   local __var="$1" __prompt="$2" __def="${3:-}" __ans=""
   if is_tty && [ "$ASSUME_YES" != 1 ]; then
@@ -34,7 +34,7 @@ ask() {
   fi
   printf -v "$__var" '%s' "${__ans:-$__def}"
 }
-# ask_secret <var> <prompt>  — hidden input
+# ask_secret <var> <prompt>  - hidden input
 ask_secret() {
   local __var="$1" __prompt="$2" __ans=""
   if is_tty && [ "$ASSUME_YES" != 1 ]; then
@@ -59,8 +59,8 @@ echo "Sets up the shared memory backend: PostgreSQL (truth) + Qdrant (search) + 
 hr
 
 echo "How do you want to run daimon-memory?"
-echo "  1) Docker Compose  — bundles PostgreSQL + Qdrant + the server (easiest)"
-echo "  2) My own PostgreSQL + Qdrant — write config; you run the binaries"
+echo "  1) Docker Compose  - bundles PostgreSQL + Qdrant + the server (easiest)"
+echo "  2) My own PostgreSQL + Qdrant - write config; you run the binaries"
 ask RUN_MODE "Choose 1 or 2" "1"
 echo
 
@@ -115,7 +115,7 @@ if ! command -v docker >/dev/null 2>&1; then
   exit 1
 fi
 echo "daimon-memory will run alongside a bundled PostgreSQL + Qdrant."
-ask API_PORT  "API port — where the memory API listens on your machine" "8080"
+ask API_PORT  "API port - where the memory API listens on your machine" "8080"
 ask PG_PASS   "PostgreSQL password for the bundled DB (blank = auto-generate)" ""
 [ -z "$PG_PASS" ] && PG_PASS="$(gen_uuid | tr -d '-' | cut -c1-24)" && dim "  (generated a password)"
 ask TENANT    "Default tenant ID (keep default unless you run isolated memory spaces)" "$DEV_TENANT"
@@ -128,7 +128,7 @@ echo
 confirm "Write $ENV_FILE and start the stack now?" || { echo "Aborted (nothing started)."; exit 0; }
 backup_env
 cat > "$ENV_FILE" <<EOF
-# daimon-memory — docker compose config (consumed by docker-compose.yml).
+# daimon-memory - docker compose config (consumed by docker-compose.yml).
 DAIMON_PORT=$API_PORT
 DAIMON_PG_PASSWORD=$PG_PASS
 DAIMON_DEFAULT_TENANT=$TENANT

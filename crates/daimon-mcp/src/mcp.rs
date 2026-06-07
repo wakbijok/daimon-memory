@@ -1,7 +1,7 @@
 //! Minimal **MCP-over-HTTP (JSON-RPC 2.0)** surface for daimon-memory.
 //!
 //! Implements the request/response subset: `initialize`, `tools/list`, `tools/call`
-//! (+ `ping`), dispatching the three tools — `remember`, `recall`, `read` — to the
+//! (+ `ping`), dispatching the three tools - `remember`, `recall`, `read` - to the
 //! deterministic engine. Full streamable-HTTP/SSE (server→client streaming) is a
 //! later slice; this synchronous JSON-RPC is what most clients exercise for tool use.
 

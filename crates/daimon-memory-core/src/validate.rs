@@ -3,7 +3,7 @@ use crate::namespace::Namespace;
 use crate::record::MemoryWrite;
 use serde_json::Value;
 
-/// The control-layer write contract (SDS v0.2 §4.5) — **deterministic, no LLM**.
+/// The control-layer write contract (SDS v0.2 §4.5) - **deterministic, no LLM**.
 ///
 /// Enforces (all in code, never by model judgment):
 /// 1. the namespace grammar (SDS A.2),
@@ -13,7 +13,7 @@ use serde_json::Value;
 ///
 /// Returns `Ok(())` or a [`MemoryError::Validation`] / `InvalidNamespace`.
 pub fn validate_write(w: &MemoryWrite) -> Result<()> {
-    // (1) namespace grammar — parsing IS the validation.
+    // (1) namespace grammar - parsing IS the validation.
     Namespace::parse(&w.namespace)?;
 
     // (2) universal fields.

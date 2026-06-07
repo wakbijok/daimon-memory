@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # ============================================================================
-# daimon-memory -> Hermes  — interactive CLIENT installer.
+# daimon-memory -> Hermes  - interactive CLIENT installer.
 #
 # Connects Hermes to your daimon-memory backend by installing the `daimon` memory
 # provider into $HERMES_HOME/plugins/daimon/ and saving its config to $HERMES_HOME/.env.
 #
 # Run with no args for a guided setup (prompts for each value with an explanation):
 #   ./install.sh
-# Non-interactive (CI / automation) — pass any value as a flag, add --yes to skip prompts:
+# Non-interactive (CI / automation) - pass any value as a flag, add --yes to skip prompts:
 #   ./install.sh --endpoint http://localhost:8080 --activate --yes
 #   ./install.sh --uninstall
 #
@@ -46,7 +46,7 @@ CONFIG="$HERMES_HOME/config.yaml"
 hr()  { printf -- '----------------------------------------------------------------\n'; }
 bold(){ printf '\033[1m%s\033[0m\n' "$*"; }
 is_tty() { [ -t 0 ] && [ -t 1 ]; }
-ask() { # ask <var> <prompt> <default>  — only prompts if the var is still empty
+ask() { # ask <var> <prompt> <default>  - only prompts if the var is still empty
   local __var="$1" __prompt="$2" __def="${3:-}" __cur __ans=""
   eval "__cur=\${$__var}"
   [ -n "$__cur" ] && return 0
@@ -76,16 +76,16 @@ hr; bold "daimon-memory -> Hermes"
 echo "Connects Hermes to your daimon-memory backend (shared, cross-tool memory)."
 hr
 
-ask ENDPOINT  "daimon-memory endpoint — the URL where your daimon-memory server is running" "http://localhost:8080"
-ask TENANT    "Tenant ID — which memory space Hermes uses (must match your other tools)"    "$DEV_TENANT"
-ask NAMESPACE "Default namespace — where Hermes files the memories it captures"             "hermes-private/notes"
+ask ENDPOINT  "daimon-memory endpoint - the URL where your daimon-memory server is running" "http://localhost:8080"
+ask TENANT    "Tenant ID - which memory space Hermes uses (must match your other tools)"    "$DEV_TENANT"
+ask NAMESPACE "Default namespace - where Hermes files the memories it captures"             "hermes-private/notes"
 
 # Best-effort reachability check (informational only).
 if command -v curl >/dev/null 2>&1; then
   if curl -sf --max-time 4 "$ENDPOINT/readyz" >/dev/null 2>&1; then
     echo "  ✓ reachable: $ENDPOINT"
   else
-    echo "  ! could not reach $ENDPOINT/readyz yet (that's fine — recall/capture are best-effort until it's up)"
+    echo "  ! could not reach $ENDPOINT/readyz yet (that's fine - recall/capture are best-effort until it's up)"
   fi
 fi
 
@@ -136,7 +136,7 @@ if [ "$ACTIVATE" = 1 ]; then
   if hermes config set memory.provider daimon >/dev/null 2>&1; then
     echo "ACTIVATED: memory.provider=daimon (config backup: $CONFIG.bak-daimon)"
   else
-    echo "WARN: 'hermes config set' failed — activate manually:  hermes memory setup daimon"
+    echo "WARN: 'hermes config set' failed - activate manually:  hermes memory setup daimon"
   fi
   echo "Restart your Hermes session for the change to take effect."
 else

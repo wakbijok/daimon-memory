@@ -23,7 +23,7 @@ pub struct MemoryWrite {
     /// Kind-specific structured fields (the per-type required-field contract).
     #[serde(default)]
     pub fields: Map<String, Value>,
-    /// References to other planes (e.g. `vault://...`, audit id) — NOT secret values.
+    /// References to other planes (e.g. `vault://...`, audit id) - NOT secret values.
     #[serde(default)]
     pub source_refs: Vec<String>,
     #[serde(default)]
@@ -72,7 +72,7 @@ pub struct MemoryHit {
     pub score: f32,
 }
 
-/// Deterministic recall filters (SDS §4.4) — applied as DB predicates, no LLM.
+/// Deterministic recall filters (SDS §4.4) - applied as DB predicates, no LLM.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RecallFilters {
     #[serde(default)]

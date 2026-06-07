@@ -2,7 +2,7 @@ use crate::error::{MemoryError, Result};
 use serde::{Deserialize, Serialize};
 
 /// Whether a record type appends a new immutable entry or updates current state.
-/// Control-layer dispatch (SDS A.1) — never caller-selectable.
+/// Control-layer dispatch (SDS A.1) - never caller-selectable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WriteMode {

@@ -3,12 +3,12 @@
 //! - **store**: runs the deterministic control-layer validation, computes a content
 //!   hash for dedup, derives the canonical URI, and persists the record + namespace
 //!   + an outbox row (PG→Qdrant) in one transaction.
-//! - **find**: deterministic recall — Postgres full-text (`tsvector`) ranking + filters,
+//! - **find**: deterministic recall - Postgres full-text (`tsvector`) ranking + filters,
 //!   **no LLM** (Qdrant vector hybrid is the next slice).
 //!
 //! Every operation is tenant-scoped two ways: it sets the RLS GUC `app.tenant_id`
 //! (for non-superuser roles) AND filters `tenant_id = $` explicitly (correct even when
-//! the connecting role bypasses RLS — the MVP runs as the DB owner).
+//! the connecting role bypasses RLS - the MVP runs as the DB owner).
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};

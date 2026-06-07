@@ -1,6 +1,6 @@
-//! `daimon-mcp` — the cross-tool surface for daimon-memory.
+//! `daimon-mcp` - the cross-tool surface for daimon-memory.
 //!
-//! Phase-1 MVP: a **stateless** REST surface over the Postgres-backed engine —
+//! Phase-1 MVP: a **stateless** REST surface over the Postgres-backed engine -
 //! validated `store`, deterministic full-text `recall`, and `read`. Tenant is taken
 //! from the `X-Daimon-Tenant` header (default for the MVP); bearer-auth → tenant and
 //! the streamable-HTTP `/mcp` JSON-RPC surface are the next slices. Qdrant vector
@@ -29,7 +29,7 @@ mod mcp;
 #[derive(Clone)]
 pub(crate) struct AppState {
     pub(crate) store: Arc<PgStore>,
-    /// Optional semantic tier — recall degrades to PG-only if absent (SDS: recall never hard-fails).
+    /// Optional semantic tier - recall degrades to PG-only if absent (SDS: recall never hard-fails).
     pub(crate) embedder: Option<Arc<daimon_vec::Embedder>>,
     pub(crate) vector: Option<Arc<daimon_vec::VectorStore>>,
     pub(crate) default_tenant: Uuid,
@@ -48,7 +48,7 @@ async fn main() -> anyhow::Result<()> {
         .and_then(|s| Uuid::parse_str(&s).ok())
         .unwrap_or_else(|| Uuid::parse_str("00000000-0000-0000-0000-0000000000d1").unwrap());
 
-    // Optional semantic tier (graceful — server runs PG-only if Qdrant/embedder absent).
+    // Optional semantic tier (graceful - server runs PG-only if Qdrant/embedder absent).
     let vector = match std::env::var("DAIMON_QDRANT_URL") {
         Ok(url) => match daimon_vec::VectorStore::connect(&url) {
             Ok(vs) => {
@@ -132,7 +132,7 @@ async fn readyz(State(st): State<AppState>) -> impl IntoResponse {
     }
 }
 
-/// POST /v1/memory — validate (deterministic control layer) + persist.
+/// POST /v1/memory - validate (deterministic control layer) + persist.
 async fn store_h(
     State(st): State<AppState>,
     headers: HeaderMap,
@@ -160,7 +160,7 @@ struct RecallReq {
     filters: RecallFilters,
 }
 
-/// POST /v1/recall — deterministic recall (no LLM).
+/// POST /v1/recall - deterministic recall (no LLM).
 async fn recall_h(
     State(st): State<AppState>,
     headers: HeaderMap,
@@ -201,7 +201,7 @@ pub(crate) async fn hybrid_recall(
         }
     }
 
-    // semantic (Qdrant dense) — only when both embedder + vector store are present.
+    // semantic (Qdrant dense) - only when both embedder + vector store are present.
     if !query.trim().is_empty() {
         if let (Some(emb), Some(vs)) = (&st.embedder, &st.vector) {
             if let Ok(mut q) = emb.embed(&[query.to_string()]) {
@@ -254,7 +254,7 @@ struct ReadQuery {
     uri: String,
 }
 
-/// GET /v1/read?uri=daimon://... — lazy full-content fetch.
+/// GET /v1/read?uri=daimon://... - lazy full-content fetch.
 async fn read_h(
     State(st): State<AppState>,
     headers: HeaderMap,

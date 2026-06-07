@@ -1,4 +1,4 @@
-# daimon-memory CI — test the workspace, then build + push the daimon-mcp image.
+# daimon-memory CI - test the workspace, then build + push the daimon-mcp image.
 # Image build uses kaniko (no Docker daemon needed on the runner).
 stages:
   - test

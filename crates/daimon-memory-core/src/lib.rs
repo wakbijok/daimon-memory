@@ -1,11 +1,11 @@
-//! `daimon-memory-core` — the deterministic, LLM-free core of **daimon-memory**.
+//! `daimon-memory-core` - the deterministic, LLM-free core of **daimon-memory**.
 //!
 //! This crate holds everything that must be *enforced by code, not LLM discretion*
 //! (SDS v0.2 Principle 2): the typed taxonomy ([`MemoryKind`]), the namespace and
 //! URI grammar ([`Namespace`], [`MemoryUri`]), the control-layer write validation
 //! ([`validate_write`]), and the [`ContextMemory`] trait every backend implements.
 //!
-//! It performs **no I/O and calls no model** — pure logic, fully unit-testable.
+//! It performs **no I/O and calls no model** - pure logic, fully unit-testable.
 //! Postgres / Qdrant backends live in sibling crates and depend on this one.
 
 pub mod error;
