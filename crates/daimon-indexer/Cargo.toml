@@ -1,24 +1,24 @@
 [package]
-name = "daimon-mcp"
+name = "daimon-indexer"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "daimon-memory cross-tool surface: streamable-HTTP /mcp + versioned REST /v1 over the deterministic engine."
+description = "Singleton outbox drainer: PG memory.index_outbox -> embed -> Qdrant upsert/delete (SDS v0.2 indexer)."
 
 [[bin]]
-name = "daimon-mcp"
+name = "daimon-indexer"
 path = "src/main.rs"
 
 [dependencies]
 daimon-memory-core = { workspace = true }
 daimon-pg = { workspace = true }
 daimon-vec = { workspace = true }
-axum.workspace = true
+deadpool-postgres.workspace = true
+tokio-postgres.workspace = true
 tokio.workspace = true
-serde.workspace = true
 serde_json.workspace = true
+uuid.workspace = true
 anyhow.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
-uuid.workspace = true

@@ -29,6 +29,9 @@ mod mcp;
 #[derive(Clone)]
 pub(crate) struct AppState {
     pub(crate) store: Arc<PgStore>,
+    /// Optional semantic tier — recall degrades to PG-only if absent (SDS: recall never hard-fails).
+    pub(crate) embedder: Option<Arc<daimon_vec::Embedder>>,
+    pub(crate) vector: Option<Arc<daimon_vec::VectorStore>>,
     pub(crate) default_tenant: Uuid,
 }
 
@@ -45,8 +48,45 @@ async fn main() -> anyhow::Result<()> {
         .and_then(|s| Uuid::parse_str(&s).ok())
         .unwrap_or_else(|| Uuid::parse_str("00000000-0000-0000-0000-0000000000d1").unwrap());
 
+    // Optional semantic tier (graceful — server runs PG-only if Qdrant/embedder absent).
+    let vector = match std::env::var("DAIMON_QDRANT_URL") {
+        Ok(url) => match daimon_vec::VectorStore::connect(&url) {
+            Ok(vs) => {
+                if let Err(e) = vs.ensure().await {
+                    tracing::warn!(%e, "qdrant ensure failed");
+                }
+                tracing::info!(%url, "semantic tier: qdrant connected");
+                Some(Arc::new(vs))
+            }
+            Err(e) => {
+                tracing::warn!(%e, "qdrant connect failed; recall is PG-only");
+                None
+            }
+        },
+        Err(_) => {
+            tracing::info!("DAIMON_QDRANT_URL unset; recall is PG-only (keyword)");
+            None
+        }
+    };
+    let embedder = if vector.is_some() {
+        match daimon_vec::Embedder::new() {
+            Ok(e) => {
+                tracing::info!("semantic tier: embedder (bge-small) loaded");
+                Some(Arc::new(e))
+            }
+            Err(e) => {
+                tracing::warn!(%e, "embedder init failed; recall is PG-only");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
     let state = AppState {
         store,
+        embedder,
+        vector,
         default_tenant,
     };
     let app = Router::new()
@@ -127,13 +167,86 @@ async fn recall_h(
     Json(req): Json<RecallReq>,
 ) -> impl IntoResponse {
     let scope = ContextScope::tenant(tenant_from(&headers, st.default_tenant));
-    match st.store.find(&scope, &req.query, &req.filters).await {
-        Ok(hits) => (StatusCode::OK, Json(json!({"hits": hits}))),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": "backend", "detail": e.to_string()})),
-        ),
+    let hits = hybrid_recall(&st, &scope, &req.query, &req.filters).await;
+    (StatusCode::OK, Json(json!({"hits": hits})))
+}
+
+/// Hybrid recall: RRF fusion of keyword (Postgres FTS) + semantic (Qdrant dense).
+/// Degrades to whichever tier is available; never hard-fails (SDS recall guarantee).
+pub(crate) async fn hybrid_recall(
+    st: &AppState,
+    scope: &ContextScope,
+    query: &str,
+    filters: &RecallFilters,
+) -> Vec<serde_json::Value> {
+    use std::collections::HashMap;
+    const K: f32 = 60.0;
+    // uri -> (kind, title, abstract, fused_score, sources)
+    let mut acc: HashMap<String, (String, String, String, f32, Vec<&'static str>)> = HashMap::new();
+
+    // keyword (Postgres FTS)
+    if let Ok(pg) = st.store.find(scope, query, filters).await {
+        for (rank, h) in pg.iter().enumerate() {
+            let e = acc.entry(h.uri.clone()).or_insert_with(|| {
+                (
+                    h.kind.as_str().to_string(),
+                    h.title.clone(),
+                    h.abstract_.clone(),
+                    0.0,
+                    vec![],
+                )
+            });
+            e.3 += 1.0 / (K + rank as f32 + 1.0);
+            e.4.push("keyword");
+        }
     }
+
+    // semantic (Qdrant dense) — only when both embedder + vector store are present.
+    if !query.trim().is_empty() {
+        if let (Some(emb), Some(vs)) = (&st.embedder, &st.vector) {
+            if let Ok(mut q) = emb.embed(&[query.to_string()]) {
+                if let Some(qv) = q.pop() {
+                    if let Ok(vhits) = vs.search(scope.tenant_id, qv, filters.limit as u64).await {
+                        for (rank, vh) in vhits.iter().enumerate() {
+                            let p = &vh.payload;
+                            let uri =
+                                p.get("uri").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                            if uri.is_empty() {
+                                continue;
+                            }
+                            let kind =
+                                p.get("kind").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                            let title =
+                                p.get("title").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                            let abs = p
+                                .get("abstract")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_string();
+                            let e = acc.entry(uri).or_insert_with(|| (kind, title, abs, 0.0, vec![]));
+                            e.3 += 1.0 / (K + rank as f32 + 1.0);
+                            e.4.push("semantic");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let mut out: Vec<serde_json::Value> = acc
+        .into_iter()
+        .map(|(uri, (kind, title, abs, score, srcs))| {
+            json!({"uri": uri, "kind": kind, "title": title, "abstract": abs, "score": score, "sources": srcs})
+        })
+        .collect();
+    out.sort_by(|a, b| {
+        b["score"]
+            .as_f64()
+            .partial_cmp(&a["score"].as_f64())
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    out.truncate(filters.limit.max(1));
+    out
 }
 
 #[derive(Deserialize)]
