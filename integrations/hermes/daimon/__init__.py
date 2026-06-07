@@ -331,8 +331,12 @@ class DaimonMemoryProvider(MemoryProvider):
     # -- tools ---------------------------------------------------------------
 
     def get_tool_schemas(self) -> List[Dict[str, Any]]:
-        if not self._client:
-            return []
+        # Schemas are static — do not gate on self._client. Hermes calls
+        # get_tool_schemas() during register_provider() BEFORE initialize(),
+        # so gating on _client (which is None until initialize) causes the
+        # tool-routing dict (_tool_to_provider) to stay empty. Tools then
+        # appear in the LLM surface via get_all_tool_schemas() but calls
+        # fail with "Unknown tool".
         return [DAIMON_REMEMBER_SCHEMA, DAIMON_RECALL_SCHEMA, DAIMON_READ_SCHEMA]
 
     def handle_tool_call(self, tool_name: str, args: Dict[str, Any], **kwargs) -> str:
