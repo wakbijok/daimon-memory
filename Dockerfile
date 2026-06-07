@@ -1,27 +1,28 @@
-# Multi-stage build for the daimon-mcp + daimon-indexer binaries.
+# Multi-stage build for the daimon-mcp + daimon-indexer + daimon binaries.
 # Built in-cluster by a kaniko Job (no CI runner / local Docker required).
 #
-# Builder uses the FULL rust image (build-essential, pkg-config, perl) + cmake/protoc
-# for the -sys crates (aws-lc, prost/tonic). Runtime carries the ONNX runtime deps
-# (libgomp1, libstdc++6) that fastembed/ort need at startup.
-# bookworm builder so the binary's glibc matches the bookworm-slim runtime below
-# (the default rust:1.94 is trixie-based -> glibc 2.38, which bookworm-slim lacks).
-FROM rust:1.94-slim-bookworm AS builder
+# IMPORTANT: build AND run on trixie (Debian 13, glibc 2.38). ort's prebuilt ONNX
+# Runtime references glibc 2.38 symbols (__isoc23_strtol*), so a bookworm (2.36)
+# builder cannot link it, and a bookworm-slim runtime cannot run a trixie-built
+# binary ("GLIBC_2.38 not found"). Both stages trixie keeps it consistent.
+#
+# The full rust image (buildpack-deps) brings build-essential, pkg-config, libssl-dev,
+# perl; add cmake + protoc for the -sys crates (aws-lc, prost/tonic). The runtime
+# carries the ONNX deps (libgomp1, libstdc++6) the statically-linked ort pulls in.
+FROM rust:1.94 AS builder
 # Cap parallelism so the homelab build node doesn't OOM on the ort/tonic codegen.
 ENV CARGO_BUILD_JOBS=2 \
     CARGO_PROFILE_RELEASE_DEBUG=false
 WORKDIR /app
-# slim base -> install all build deps explicitly (cc, openssl, cmake, protoc).
 RUN apt-get update \
- && apt-get install -y --no-install-recommends \
-      build-essential cmake pkg-config protobuf-compiler libssl-dev \
+ && apt-get install -y --no-install-recommends cmake protobuf-compiler \
  && rm -rf /var/lib/apt/lists/*
 COPY Cargo.toml Cargo.lock* ./
 COPY crates ./crates
 COPY migrations ./migrations
 RUN cargo build --release --bin daimon-mcp --bin daimon-indexer --bin daimon
 
-FROM debian:bookworm-slim
+FROM debian:trixie-slim
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates libgomp1 libstdc++6 \
  && rm -rf /var/lib/apt/lists/*
