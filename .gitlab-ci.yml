@@ -1,0 +1,46 @@
+# daimon-memory CI — test the workspace, then build + push the daimon-mcp image.
+# Image build uses kaniko (no Docker daemon needed on the runner).
+stages:
+  - test
+  - build
+
+variables:
+  CARGO_HOME: "$CI_PROJECT_DIR/.cargo"
+  CARGO_TERM_COLOR: "always"
+
+cache:
+  key: "$CI_COMMIT_REF_SLUG"
+  paths:
+    - .cargo/
+    - target/
+
+test:
+  stage: test
+  image: rust:1.94-slim
+  script:
+    - cargo --version
+    - cargo test --workspace --locked || cargo test --workspace
+  rules:
+    - if: '$CI_COMMIT_BRANCH'
+    - if: '$CI_COMMIT_TAG'
+
+# Builds glcr.wakbijok.uk/daimon/daimon-memory/daimon-mcp:<sha|tag> via kaniko.
+build-image:
+  stage: build
+  needs: ["test"]
+  image:
+    name: gcr.io/kaniko-project/executor:debug
+    entrypoint: [""]
+  script:
+    - mkdir -p /kaniko/.docker
+    - echo "{\"auths\":{\"$CI_REGISTRY\":{\"username\":\"$CI_REGISTRY_USER\",\"password\":\"$CI_REGISTRY_PASSWORD\"}}}" > /kaniko/.docker/config.json
+    - >-
+      /kaniko/executor
+      --context "$CI_PROJECT_DIR"
+      --dockerfile "$CI_PROJECT_DIR/Dockerfile"
+      --destination "$CI_REGISTRY_IMAGE/daimon-mcp:$CI_COMMIT_SHORT_SHA"
+      --destination "$CI_REGISTRY_IMAGE/daimon-mcp:latest"
+  rules:
+    # Build on default branch + tags only (not every feature push).
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - if: '$CI_COMMIT_TAG'
