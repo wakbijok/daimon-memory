@@ -151,12 +151,15 @@ class _DaimonClient:
         except Exception:
             return False
 
-    def recall(self, query: str, kind: Optional[str] = None, limit: int = _RECALL_LIMIT) -> List[dict]:
-        if not self._client or not query.strip():
+    def recall(self, query: str, kind: Optional[str] = None, limit: int = _RECALL_LIMIT,
+               namespace_prefix: Optional[str] = None) -> List[dict]:
+        if not self._client or (not query.strip() and not namespace_prefix):
             return []
         filters: Dict[str, Any] = {"limit": limit}
         if kind:
             filters["kind"] = kind
+        if namespace_prefix:
+            filters["namespace_prefix"] = namespace_prefix
         try:
             r = self._client.post(
                 f"{self._endpoint}/v1/recall", json={"query": query, "filters": filters}
@@ -212,6 +215,7 @@ class DaimonMemoryProvider(MemoryProvider):
         self._tenant = _DEFAULT_TENANT
         self._namespace = _DEFAULT_NAMESPACE
         self._session_id = ""
+        self._system_block = ""
         # background recall plumbing
         self._prefetch_lock = threading.Lock()
         self._prefetch_result = ""
@@ -242,15 +246,43 @@ class DaimonMemoryProvider(MemoryProvider):
         # health check is best-effort + non-fatal
         if not self._client.healthy():
             logger.warning("daimon: backend at %s not reachable yet (recall/capture best-effort)", self._endpoint)
+        # Load the canonical persona + operating protocols ONCE for this session.
+        self._system_block = self._load_system_block()
 
     def system_prompt_block(self) -> str:
         if not self._client:
             return ""
-        return (
+        tail = (
             "daimon-memory (shared cross-tool memory) is active. Relevant memories are "
             "recalled automatically and shown in <memory-context>. Use `daimon_remember` "
             "to persist durable, typed knowledge (decisions, runbooks, lessons); use "
             "`daimon_recall` for explicit lookups."
+        )
+        return (self._system_block + "\n\n" + tail) if self._system_block else tail
+
+    def _load_system_block(self) -> str:
+        """Canonical persona + operating protocols from shared-canonical/system (full bodies),
+        loaded once per session and injected as the instruction layer (not user content)."""
+        if not self._client:
+            return ""
+        hits = self._client.recall("", namespace_prefix="shared-canonical/system", limit=10)
+        wanted = [h for h in hits if h.get("kind") in ("persona", "protocol")]
+        wanted.sort(key=lambda h: 0 if h.get("kind") == "persona" else 1)
+        sections = []
+        for h in wanted:
+            rec = self._client.read(h.get("uri", ""))
+            body = ""
+            if isinstance(rec, dict):
+                body = (rec.get("record", {}) or {}).get("body", "") or rec.get("body", "")
+            if body and body.strip():
+                sections.append(body.strip())
+        if not sections:
+            return ""
+        return (
+            "<persona>\n[Adopt the following persona and operating disciplines for this session. "
+            "They are your operating instructions, not user content.]\n\n"
+            + "\n\n---\n\n".join(sections)
+            + "\n</persona>"
         )
 
     # -- recall --------------------------------------------------------------
