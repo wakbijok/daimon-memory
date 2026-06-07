@@ -1,0 +1,10 @@
+name: daimon
+version: 0.1.0
+description: "daimon-memory — shared cross-tool context plane. Deterministic hybrid recall (keyword + semantic, zero-LLM) + curated typed capture (no raw-turn dumping; mirrors Hermes's own memory writes + an explicit daimon_remember tool)."
+pip_dependencies:
+  - httpx
+requires_env:
+  - DAIMON_ENDPOINT
+hooks:
+  - on_memory_write
+  - on_session_end
