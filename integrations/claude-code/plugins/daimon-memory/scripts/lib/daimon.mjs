@@ -42,6 +42,26 @@ export async function recall(query, { limit = 6, kind = null } = {}) {
   }
 }
 
+// POST /v1/memory (curated capture). Returns true on store or validation-skip, false on
+// network failure. Best-effort: never throws.
+export async function store(payload) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 6000);
+  try {
+    const r = await fetch(`${ENDPOINT}/v1/memory`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-daimon-tenant": TENANT },
+      body: JSON.stringify(payload),
+      signal: ctrl.signal,
+    });
+    return r.ok || r.status === 400; // 400 = validation reject; nothing more to do
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // Format hits into a compact, labelled block.
 export function formatHits(hits, heading) {
   if (!hits || !hits.length) return "";
