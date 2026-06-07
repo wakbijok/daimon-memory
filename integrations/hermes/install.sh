@@ -18,7 +18,7 @@ set -euo pipefail
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
 
-ENDPOINT="http://10.100.30.27"
+ENDPOINT="http://localhost:8080"
 TENANT="00000000-0000-0000-0000-0000000000d1"
 NAMESPACE="hermes-private/notes"
 ACTIVATE=0

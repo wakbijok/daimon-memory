@@ -1,0 +1,76 @@
+# daimon-memory — full local stack: Postgres + Qdrant + API server + indexer.
+#   docker compose up --build
+# First build compiles the Rust workspace (slow once); first server start downloads
+# the embedding model (~130 MB once). The API is then on http://localhost:8080.
+#
+# NOTE: the credentials below are insecure dev defaults — change them for any real use.
+
+x-db-env: &db-env
+  PGHOST: postgres
+  PGPORT: "5432"
+  PGUSER: daimon
+  PGPASSWORD: daimon
+  PGDATABASE: daimon_memory
+  DAIMON_QDRANT_URL: http://qdrant:6334
+  RUST_LOG: info
+
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: daimon
+      POSTGRES_PASSWORD: daimon
+      POSTGRES_DB: daimon_memory
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U daimon -d daimon_memory"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    volumes:
+      - qdrantdata:/qdrant/storage
+
+  # One-shot: apply the schema, then exit.
+  migrate:
+    build: .
+    command: ["daimon", "migrate"]
+    environment: *db-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  daimon-mcp:
+    build: .
+    environment:
+      <<: *db-env
+      DAIMON_MCP_BIND: 0.0.0.0:8080
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+      migrate:
+        condition: service_completed_successfully
+
+  daimon-indexer:
+    build: .
+    command: ["daimon-indexer"]
+    environment: *db-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+      migrate:
+        condition: service_completed_successfully
+
+volumes:
+  pgdata:
+  qdrantdata:

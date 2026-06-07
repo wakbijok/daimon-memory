@@ -1,220 +1,201 @@
+<div align="center">
+
 # daimon-memory
 
-**The context plane for AI tools** — a shared, cross-tool memory engine where *recall is
-deterministic (zero-LLM)* and *capture is curated*. One backend for Claude Code, Codex, Hermes,
-and daimon's own AIOps agents.
+**A shared, cross-tool memory engine for AI assistants — where recall is deterministic and capture is curated.**
 
-> Scope: **daimon-memory only**, not the whole daimon. It's built as a standalone component
-> first; daimon (the agent) consumes it later.
+One memory backend for Claude Code, Codex, Hermes, and your own agents.
+Postgres for truth, Qdrant for meaning, MCP + REST for everyone.
+
+[Why](#the-problem) · [Features](#features) · [Architecture](#architecture) · [Quick start](#quick-start) · [Connect a tool](#connect-your-tools) · [Roadmap](#status--roadmap)
+
+![status](https://img.shields.io/badge/status-experimental-orange) ![license](https://img.shields.io/badge/license-MIT-blue) ![rust](https://img.shields.io/badge/rust-edition%202024-orange)
+
+</div>
 
 ---
 
 ## The problem
 
-AI assistants are getting good memories — but each one keeps its *own*, and they don't talk to
-each other:
+AI assistants are growing memories — but each one keeps its **own**, and they don't talk to each other.
 
-- **Siloed & fragmented.** Claude Code remembers one thing, Hermes another, Codex a third. Switch
-  tools and you lose the thread. Your "second brain" is shattered across four apps.
-- **Manual & drifting.** Hand-curated Markdown (`CLAUDE.md`, `SOUL.md`, notes) doesn't scale, goes
-  stale, and has to be copied between tools.
-- **Heavy "smart" memory is too heavy.** Full memory systems (e.g. OpenViking) are genuinely
-  powerful, but they bundle a large embedded VLM to *extract* memories from raw conversation.
-  That pushes the inference requirement so high it can't run comfortably on a homelab GPU — and if
-  one component of an agent needs a frontier model, the whole agent does.
+- **Siloed.** Your coding agent remembers one thing, your chat agent another. Switch tools and the context is gone. Your "second brain" is shattered across a dozen apps.
+- **Manual & drifting.** Hand-curated Markdown (`CLAUDE.md`, `AGENTS.md`, notes) doesn't scale, goes stale, and gets copy-pasted between tools.
+- **"Smart" memory is heavy.** Many memory systems bundle a large language/vision model to *extract* memories from raw conversation. That's powerful — but it pushes the hardware requirement so high that the memory layer alone can demand a frontier GPU. If one component needs a big model, the whole stack does.
 
-What's needed is a **lightweight, shared memory backend** that any tool can read and write, where
-the expensive part (a big model) is *not* in the loop.
+**daimon-memory** is a lightweight, self-hostable memory backend that any tool can read and write — designed so the expensive part (a large model) is *never in the loop*.
 
 ## Introduction
 
-daimon-memory is that backend — a single Rust service backed by **Postgres** (the canonical store)
-and **Qdrant** (a rebuildable semantic index), exposed over **MCP** and **REST**, and consumed by
-every tool you use.
+daimon-memory is a single service backed by **PostgreSQL** (the canonical store) and **Qdrant** (a rebuildable semantic index), exposed over the **Model Context Protocol (MCP)** and a plain **REST** API. Point your tools at it and they share one memory.
 
-Its design follows one framing: **stores knowledge; daimon decides; tools act.** The memory plane
-holds durable, typed knowledge; the agent reasons over it; the tools carry out work. Two principles
-keep it light and trustworthy:
+Two principles keep it light and trustworthy:
 
-1. **Per-component LLM minimization.** Recall is **deterministic and zero-LLM** (embeddings +
-   keyword + filters). Capture is **curated at the edge** — the consuming tool does its own
-   small-scope extraction and hands us the result; daimon-memory runs *no* extraction model. The
-   memory tier adds ≈0 to aggregate inference cost.
-2. **Deterministic facts via control.** Structure is enforced by **code at the interface**, not by
-   LLM discretion. Writes are typed and validated; malformed ones are rejected — so recall returns
-   facts with a known shape, not whatever a model felt like emitting.
+> **1 · Recall is deterministic and zero-LLM.** Retrieval is embeddings + keyword + filters — no model decides what comes back. It's fast, cheap, and reproducible.
+>
+> **2 · Capture is curated, structured by code.** Writes are *typed* and validated at the interface; malformed ones are rejected. The consuming tool does any small-scope extraction and hands daimon-memory the result — daimon-memory itself runs **no extraction model**.
 
-## Features & capabilities
+The result: semantic, cross-tool memory that runs comfortably on a single node, with recall you can trust to be deterministic.
 
-- **Cross-tool, shared memory** — one tenant-scoped store behind every tool.
-- **Deterministic hybrid recall** — Postgres full-text (`tsvector`) + Qdrant dense vectors fused
-  with **Reciprocal Rank Fusion**. Semantic recall by *meaning* (a paraphrased query finds the
-  record even when no words match) with **no LLM in the recall path**.
-- **Typed, control-enforced capture** — 9 canonical record kinds (decision, runbook,
-  incident_summary, service_topology, known_failure_mode, remediation_pattern, project_convention,
-  agent_lesson, resource_summary) with per-kind required fields, plus per-namespace extensibility.
-- **Curated, not raw** — no raw-turn dumping; capture comes from explicit `remember` calls or by
-  mirroring a tool's own curated memory writes.
-- **Addressable** — every record has a `daimon://{tenant}/{namespace}/{kind}/{id}` URI; a
-  browsable namespace tree; L0/L1/L2 tiers (abstract → overview → full).
-- **Tenant isolation** — Postgres Row-Level Security (fail-closed) + explicit predicates.
-- **Rebuildable index** — Qdrant is disposable; `daimon reindex` reconstructs it from Postgres.
-- **No dual-write** — a transactional **outbox** in Postgres is drained asynchronously to Qdrant by
-  a singleton indexer.
-- **Scales** — stateless API tier (HPA) over a stateful data tier (Postgres + Qdrant StatefulSets);
-  "design for 3, run 1".
-- **MCP-native + REST** — `remember` / `recall` / `read` as MCP tools and as `/v1` REST endpoints.
+## Features
 
-## Architecture & framework
+- 🔗 **Cross-tool** — one tenant-scoped store behind every assistant.
+- 🧠 **Hybrid recall** — PostgreSQL full-text (`tsvector`) **+** Qdrant dense vectors, fused with **Reciprocal Rank Fusion**. Find a record by *meaning* even when no keywords match — **with no LLM in the recall path**.
+- 🧱 **Typed, validated capture** — nine canonical record kinds (decision, runbook, incident summary, service topology, known failure mode, remediation pattern, project convention, agent lesson, resource summary) with per-kind required fields, plus per-namespace extensibility.
+- ✋ **Curated, not raw** — no raw-transcript dumping; memories come from explicit `remember` calls or by mirroring a tool's own curated writes.
+- 🔖 **Addressable** — every record gets a `daimon://{tenant}/{namespace}/{kind}/{id}` URI, a browsable namespace tree, and L0/L1/L2 tiers (abstract → overview → full).
+- 🔒 **Tenant isolation** — PostgreSQL Row-Level Security (fail-closed) + explicit predicates.
+- ♻️ **Rebuildable index** — Qdrant is disposable; rebuild it from PostgreSQL with one command.
+- 📤 **No dual-write** — a transactional **outbox** is drained to Qdrant asynchronously by a singleton indexer.
+- 📈 **Scales** — stateless API tier (autoscaling) over a stateful data tier; "design for 3, run 1".
+- 🔌 **MCP-native + REST** — `remember` / `recall` / `read` as MCP tools *and* `/v1` REST endpoints.
 
-daimon-memory is a deterministic Rust service, **not** an agentic-framework app — there is no model
-in the request path. The "framework" is the component model + contracts:
+## Architecture
+
+daimon-memory is a deterministic Rust service — there is **no model in the request path**. The "framework" is its component model and contracts:
 
 ```
- consuming tools (Claude Code · Codex · Hermes · AIOps)
-        │  MCP (/mcp)        REST (/v1)
+   your tools  (Claude Code · Codex · Hermes · your agents)
+        │   MCP (/mcp)        REST (/v1)
         ▼
-   ┌──────────────┐   recall = RRF( Postgres FTS , Qdrant dense )   [zero-LLM]
-   │  daimon-mcp  │   store  = validate (control layer) → Postgres + outbox
+   ┌──────────────┐    recall = RRF( Postgres FTS , Qdrant dense )   ← zero-LLM
+   │  daimon-mcp  │    store  = validate (control layer) → Postgres + outbox
    └──────┬───────┘
-          │ ContextMemory trait
-   ┌──────▼───────┐        ┌───────────────┐       ┌──────────────┐
-   │  daimon-pg   │        │  daimon-vec   │◄──────│ daimon-indexer│
-   │  Postgres    │        │ Qdrant + bge  │  embed │  outbox drain │
-   │ (canonical)  │        │ (rebuildable) │       │  (singleton)  │
-   └──────────────┘        └───────────────┘       └──────────────┘
+          │  ContextMemory trait
+   ┌──────▼───────┐      ┌───────────────┐       ┌────────────────┐
+   │  daimon-pg   │      │  daimon-vec   │◄──────│ daimon-indexer │
+   │  PostgreSQL  │      │ Qdrant + bge  │ embed  │ outbox drainer │
+   │ (canonical)  │      │ (rebuildable) │       │  (singleton)   │
+   └──────────────┘      └───────────────┘       └────────────────┘
 ```
 
-Crates (Rust workspace, edition 2024):
+A Rust workspace (edition 2024):
 
 | Crate | Role |
 |-------|------|
-| `daimon-memory-core` | Deterministic, **LLM-free** core: `MemoryKind` taxonomy, `Namespace`/`MemoryUri` grammar, the control-layer `validate_write`, the `ContextMemory` trait. Pure logic, fully unit-tested. |
-| `daimon-pg` | Postgres-backed `ContextMemory`: validated store (content-hash dedup, outbox in one txn) + deterministic full-text recall; tenant-scoped (RLS GUC + explicit predicate). |
-| `daimon-vec` | In-process **fastembed bge-small-en-v1.5** (384-d) embedder + Qdrant `VectorStore` (tenant-filtered search). |
-| `daimon-indexer` | Singleton outbox drainer: `memory.index_outbox` → embed → Qdrant upsert/delete. |
-| `daimon-mcp` | Stateless server: REST `/v1` + MCP JSON-RPC `/mcp`; **hybrid RRF recall**; graceful degrade to keyword-only. |
-| `daimon-cli` (`daimon`) | Ops: `migrate` / `reindex` / `health` / `stats`. |
+| `daimon-memory-core` | Deterministic, **LLM-free** core: the `MemoryKind` taxonomy, the `daimon://` URI / namespace grammar, the control-layer write validation, and the `ContextMemory` trait. Pure logic, fully unit-tested. |
+| `daimon-pg` | PostgreSQL-backed store: validated writes (content-hash dedup, outbox in one transaction) + deterministic full-text recall; tenant-scoped. |
+| `daimon-vec` | In-process [fastembed](https://github.com/Anush008/fastembed-rs) **bge-small-en-v1.5** (384-d) embedder + a Qdrant vector store. |
+| `daimon-indexer` | Singleton drainer: PostgreSQL outbox → embed → Qdrant upsert/delete. |
+| `daimon-mcp` | Stateless server: REST `/v1` + MCP JSON-RPC `/mcp`; **hybrid recall**; degrades gracefully to keyword-only if the vector tier is down. |
+| `daimon-cli` (`daimon`) | Operations: `migrate` / `reindex` / `health` / `stats`. |
 
-Data model: `memory.records` (canonical), `memory.namespaces` (the tree), `memory.type_registry`
-(taxonomy + extensibility), `memory.index_outbox` (PG→Qdrant). Full schema in
-`migrations/V001__memory_schema.sql`.
+**Data model** (`migrations/V001__memory_schema.sql`): `records` (canonical), `namespaces` (the tree), `type_registry` (taxonomy + extensibility), `index_outbox` (Postgres → Qdrant).
 
 ## Tech stack
 
-- **Rust** (edition 2024) · **tokio** · **axum 0.8** (HTTP) · **async-trait**
-- **Postgres** via **tokio-postgres** + **deadpool-postgres**; migrations via **refinery**
-- **Qdrant** via **qdrant-client 1.18**; embeddings via **fastembed 5** (bge-small, ONNX/`ort`)
-- Recall: Postgres `tsvector` (keyword) + Qdrant cosine (dense) + **RRF** fusion
-- **sha2** (content dedup) · **serde** / **serde_json**
-- Deploy: **k3s** + **ArgoCD** (GitOps) + **SealedSecrets** + **kaniko** build → **glcr** registry
+**Rust** (edition 2024) · tokio · axum · PostgreSQL (tokio-postgres + deadpool, refinery migrations) · Qdrant (qdrant-client) · fastembed / ONNX Runtime for embeddings · Reciprocal Rank Fusion for hybrid ranking.
 
-## Quick start (local)
+## Quick start
+
+The fastest path is Docker Compose — it brings up PostgreSQL, Qdrant, the API server, and the indexer, and applies the schema:
 
 ```bash
-cargo test --workspace            # build + unit tests
-
-# run against a Postgres + Qdrant (e.g. port-forwarded from the cluster):
-export PGHOST=127.0.0.1 PGPORT=5432 PGUSER=daimon PGDATABASE=daimon_memory PGPASSWORD=...
-export DAIMON_QDRANT_URL=http://127.0.0.1:6334
-./target/debug/daimon migrate     # apply schema
-./target/debug/daimon-mcp         # serves :8080  (/v1 + /mcp)
-./target/debug/daimon-indexer     # outbox → Qdrant (separate process)
-
-# smoke test
-curl -s localhost:8080/readyz
-curl -s -XPOST localhost:8080/v1/recall -H 'content-type: application/json' -d '{"query":"..."}'
+git clone <repo-url> && cd daimon-memory
+docker compose up --build
 ```
 
-## Install into your tools
+Then:
 
-> All paths point a tool at a running daimon-mcp via `DAIMON_ENDPOINT` (e.g. the in-cluster
-> LoadBalancer, or `http://127.0.0.1:18080` for a local instance). Detailed guides live in
-> **daimon-docs** (`daimon-memory/integrations/`).
+```bash
+curl -s localhost:8080/readyz
 
-### Hermes ✅ (built + tested)
+# store a typed memory
+curl -s -XPOST localhost:8080/v1/memory -H 'content-type: application/json' -d '{
+  "kind": "decision",
+  "namespace": "shared-canonical/architecture/decisions",
+  "title": "Adopt Postgres + Qdrant",
+  "body": "Use Postgres as the canonical store and Qdrant as a rebuildable vector index.",
+  "fields": { "context": "needed a shared memory store", "rationale": "deterministic recall, rebuildable index" }
+}'
 
-A native Hermes **memory provider** — automatic recall (`prefetch`) + curated capture
-(`on_memory_write` mirror + a `daimon_remember` tool). No Hermes fork.
+# recall (hybrid keyword + semantic)
+curl -s -XPOST localhost:8080/v1/recall -H 'content-type: application/json' -d '{"query":"how should we store memory"}'
+```
+
+> First start downloads the embedding model (~130 MB) once.
+
+### From source
+
+```bash
+cargo test --workspace          # build + unit tests
+# point the binaries at a running Postgres + Qdrant via env (see Configuration), then:
+cargo run --bin daimon -- migrate
+cargo run --bin daimon-mcp        # serves :8080  (/v1 + /mcp)
+cargo run --bin daimon-indexer    # outbox → Qdrant (separate process)
+```
+
+## Connect your tools
+
+Point any MCP-capable assistant at `http://localhost:8080/mcp` (or wherever you host daimon-mcp). It exposes the `remember`, `recall`, and `read` tools.
+
+### Hermes — native memory provider ✅
+
+A first-class Hermes memory provider: **automatic recall** on every turn plus **curated capture** (mirrors Hermes's own memory writes and adds a `daimon_remember` tool). No fork required.
 
 ```bash
 cd integrations/hermes
-./install.sh --endpoint http://10.100.30.27               # install + configure (.env), not activated
-./install.sh --endpoint http://10.100.30.27 --activate    # also switch Hermes to daimon
-hermes memory status                                       # provider: daimon
+./install.sh --endpoint http://localhost:8080            # install + configure
+./install.sh --endpoint http://localhost:8080 --activate # also make daimon the active provider
 ```
-Uninstall: `./install.sh --uninstall` then `hermes memory setup openviking` (or `hermes memory off`).
+Uninstall: `./install.sh --uninstall`.
 
-### Claude Code 🔜 (MCP — works manually today; installer planned)
+### Claude Code — via MCP
 
-daimon-mcp speaks MCP, so register it as an MCP server. Add to your Claude Code MCP config:
+Add daimon-memory as an MCP server (e.g. in `.mcp.json`):
 
 ```json
 { "mcpServers": {
     "daimon-memory": {
       "type": "http",
-      "url": "http://10.100.30.27/mcp",
-      "headers": { "X-Daimon-Tenant": "<tenant-uuid>" }
+      "url": "http://localhost:8080/mcp",
+      "headers": { "X-Daimon-Tenant": "<your-tenant-uuid>" }
 } } }
 ```
-This exposes `remember` / `recall` / `read`. A dedicated installer (MCP + hooks-based passive
-capture) is on the roadmap.
 
-### Codex 🔜 (MCP — works manually today; installer planned)
+### Codex — via MCP
 
-Codex consumes MCP servers; add daimon-mcp to its MCP config (e.g. `~/.codex/config.toml`):
+Add it to your Codex MCP configuration:
 
 ```toml
 [mcp_servers.daimon-memory]
-url = "http://10.100.30.27/mcp"
+url = "http://localhost:8080/mcp"
 transport = "http"
 ```
-Recall-only is fine — Codex can query daimon-memory even without a capture hook. Installer planned.
 
-### Uninstall (general)
-
-Remove the tool's MCP/provider config entry and restart it. The Hermes installer has an explicit
-`--uninstall`. No data is touched — memories live in daimon-memory, independent of any tool.
+> Dedicated installers for Claude Code and Codex (with passive-capture hooks, like the Hermes one) are on the [roadmap](#status--roadmap). Memories live in daimon-memory independently of any tool — uninstalling a tool never deletes your memory.
 
 ## Configuration
 
-Server (`daimon-mcp` / `daimon-indexer`), via env:
+The server and indexer are configured via environment variables:
 
-| var | purpose | default |
-|-----|---------|---------|
-| `DAIMON_MCP_BIND` | listen address | `0.0.0.0:8080` |
-| `PGHOST`/`PGPORT`/`PGUSER`/`PGPASSWORD`/`PGDATABASE` | Postgres (libpq) | — |
+| Variable | Purpose | Default |
+|----------|---------|---------|
+| `DAIMON_MCP_BIND` | Listen address | `0.0.0.0:8080` |
+| `PGHOST` `PGPORT` `PGUSER` `PGPASSWORD` `PGDATABASE` | PostgreSQL connection | — |
 | `DAIMON_QDRANT_URL` | Qdrant **gRPC** endpoint | `http://127.0.0.1:6334` |
-| `DAIMON_DEFAULT_TENANT` | tenant when no `X-Daimon-Tenant` header | dev tenant |
-| `RUST_LOG` | log level | `info` |
+| `DAIMON_DEFAULT_TENANT` | Tenant used when no `X-Daimon-Tenant` header is sent | a fixed dev UUID |
+| `RUST_LOG` | Log level | `info` |
 
-API surface: REST `POST /v1/memory`, `POST /v1/recall`, `GET /v1/read?uri=`, `GET /readyz`,
-`GET /health`; MCP `POST /mcp` (`initialize` / `tools/list` / `tools/call` → remember/recall/read).
+**API** — REST: `POST /v1/memory`, `POST /v1/recall`, `GET /v1/read?uri=`, `GET /readyz`, `GET /health`. MCP: `POST /mcp` (`initialize` / `tools/list` / `tools/call`).
 
 ## Deployment
 
-GitOps manifests live in the homelab repo at `k8s-homelab-gitops/workloads/daimon-memory/` (ArgoCD).
-The data tier (Postgres + Qdrant) deploys standalone; the `daimon-mcp` image is built in-cluster by
-a kaniko Job → `glcr.wakbijok.uk/daimon/daimon-memory/daimon-mcp`. See
-`daimon-docs/daimon-memory/` for the SDS, deployment notes, and integration guides.
+- **Docker / Compose** — the included `Dockerfile` builds both server binaries; `docker-compose.yml` runs the full stack.
+- **Kubernetes** — daimon-mcp is a stateless `Deployment` (with an HPA); PostgreSQL and Qdrant are `StatefulSet`s. Build the image from the `Dockerfile` (e.g. with kaniko in CI) and apply your manifests.
 
 ## Status & roadmap
 
-**Phase 1 — feature-complete** (proven live against the deployed data tier): typed control-layer
-store, deterministic keyword recall, semantic recall (bge-small + Qdrant), hybrid RRF fusion, the
-outbox→Qdrant indexer, REST + MCP surfaces, ops CLI, and the Hermes integration.
+> ⚠️ **Experimental.** The engine is feature-complete and tested, but APIs may change before a tagged release. Not yet recommended for production.
 
-Next: in-cluster image + rollout (in progress) · bearer-auth → tenant · non-superuser DB role so
-RLS is the active enforcer · streamable-HTTP `/mcp` SSE · **persona/soul layer** (one shared
-identity across tools — see `daimon-docs/daimon-memory/proposals/persona-soul-layer.md`) · Claude
-Code + Codex installers.
+**Working today:** typed control-layer writes · deterministic keyword recall · semantic recall (bge-small + Qdrant) · hybrid RRF fusion · the outbox→Qdrant indexer · REST + MCP surfaces · ops CLI · the Hermes integration.
 
-## Docs & links
+**Planned:** bearer-token auth → tenant mapping · a least-privilege DB role so RLS is the active enforcer · streamable-HTTP `/mcp` (SSE) · a **shared identity/persona layer** (one consistent assistant persona across tools) · dedicated Claude Code & Codex installers.
 
-- Spec: `daimon-docs/daimon-memory/sds/` · Proposals: `daimon-docs/daimon-memory/proposals/`
-- Integrations: `daimon-docs/daimon-memory/integrations/`
-- Repo: `git.wakbijok.uk/daimon/daimon-memory` · Docs: `git.wakbijok.uk/daimon/daimon-docs`
+## Contributing
+
+Issues and PRs welcome. `cargo test --workspace` should pass; please keep the core crate free of I/O and model calls (that's what makes recall deterministic). For larger changes, open an issue to discuss the design first.
 
 ## License
 
-MIT.
+[MIT](LICENSE).

@@ -15,7 +15,7 @@ RUN apt-get update \
 COPY Cargo.toml Cargo.lock* ./
 COPY crates ./crates
 COPY migrations ./migrations
-RUN cargo build --release --bin daimon-mcp --bin daimon-indexer
+RUN cargo build --release --bin daimon-mcp --bin daimon-indexer --bin daimon
 
 FROM debian:bookworm-slim
 RUN apt-get update \
@@ -29,6 +29,7 @@ COPY --from=builder /app/migrations /app/migrations
 # egress, or bake the model cache into the image in a follow-up.
 COPY --from=builder /app/target/release/daimon-mcp /usr/local/bin/daimon-mcp
 COPY --from=builder /app/target/release/daimon-indexer /usr/local/bin/daimon-indexer
+COPY --from=builder /app/target/release/daimon /usr/local/bin/daimon
 ENV DAIMON_MCP_BIND=0.0.0.0:8080
 EXPOSE 8080
 ENTRYPOINT ["/usr/local/bin/daimon-mcp"]
