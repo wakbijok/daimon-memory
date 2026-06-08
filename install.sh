@@ -138,6 +138,24 @@ echo "Wrote $ENV_FILE"
 echo
 echo "Starting (first run builds the image + downloads the embedding model; this is slow once)..."
 ( cd "$SELF_DIR" && docker compose up -d --build )
+
+echo
+echo "Waiting for the API to come up..."
+for _ in $(seq 1 30); do
+  curl -sf "http://localhost:${API_PORT}/readyz" >/dev/null 2>&1 && break
+  sleep 2
+done
+echo
+# One-time persona setup. The pre-built `daimon` binary ships INSIDE the daimon-mcp image,
+# so we just invoke its wizard against the freshly-started server (no separate download). It
+# prompts for the AI's identity + your name/job and writes ONE persona record that every
+# connected tool loads at session start. Re-runnable anytime (Update-mode: it supersedes).
+if confirm "Set up your AI persona now? (the shared identity every connected tool adopts)"; then
+  echo "Launching the persona wizard..."
+  ( cd "$SELF_DIR" && docker compose exec -e DAIMON_TENANT="$TENANT" daimon-mcp daimon persona ) \
+    || echo "  (skipped; run later with: docker compose exec daimon-mcp daimon persona)"
+fi
+
 echo
 hr; bold "daimon-memory is starting"
 echo "  API:        http://localhost:${API_PORT}/readyz"
@@ -146,4 +164,6 @@ echo "  Stop:       docker compose down        (add -v to also delete data)"
 echo
 echo "Next: connect a tool with the client installer, e.g."
 echo "  integrations/hermes/install.sh --endpoint http://localhost:${API_PORT}"
+echo "Persona: re-run the identity wizard anytime with"
+echo "  docker compose exec daimon-mcp daimon persona"
 hr
