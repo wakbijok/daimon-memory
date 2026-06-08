@@ -4,7 +4,10 @@
       { "matcher": "*", "hooks": [ { "type": "command", "command": "node __DAIMON_PLUGIN_ROOT__/scripts/session-start.mjs", "timeout": 10 } ] }
     ],
     "UserPromptSubmit": [
-      { "matcher": "*", "hooks": [ { "type": "command", "command": "node __DAIMON_PLUGIN_ROOT__/scripts/auto-recall.mjs", "timeout": 8 } ] }
+      { "matcher": "*", "hooks": [
+        { "type": "command", "command": "node __DAIMON_PLUGIN_ROOT__/scripts/auto-recall.mjs", "timeout": 8 },
+        { "type": "command", "command": "node __DAIMON_PLUGIN_ROOT__/scripts/nudge.mjs", "timeout": 8 }
+      ] }
     ]
   }
 }
