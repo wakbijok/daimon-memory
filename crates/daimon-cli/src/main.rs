@@ -52,9 +52,10 @@ async fn main() -> Result<()> {
         "health" => health().await,
         "stats" => stats().await,
         "persona" => persona().await,
+        "protocol" => protocol().await,
         other => {
             eprintln!(
-                "daimon {} - usage: daimon <migrate|reindex|health|stats|persona>",
+                "daimon {} - usage: daimon <migrate|reindex|health|stats|persona|protocol>",
                 if other.is_empty() { "(no command)" } else { other }
             );
             std::process::exit(2);
@@ -255,6 +256,159 @@ async fn persona() -> Result<()> {
     } else {
         anyhow::bail!("persona write failed ({status}): {txt}");
     }
+}
+
+fn endpoint_tenant() -> (String, String) {
+    let endpoint = std::env::var("DAIMON_ENDPOINT")
+        .unwrap_or_else(|_| "http://127.0.0.1:8080".to_string())
+        .trim_end_matches('/')
+        .to_string();
+    let tenant = std::env::var("DAIMON_TENANT")
+        .unwrap_or_else(|_| "00000000-0000-0000-0000-0000000000d1".to_string());
+    (endpoint, tenant)
+}
+
+async fn post_memory(endpoint: &str, tenant: &str, record: &serde_json::Value) -> Result<String> {
+    let resp = reqwest::Client::new()
+        .post(format!("{endpoint}/v1/memory"))
+        .header("x-daimon-tenant", tenant)
+        .json(record)
+        .send()
+        .await?;
+    let status = resp.status();
+    let txt = resp.text().await.unwrap_or_default();
+    if status.is_success() {
+        Ok(txt)
+    } else {
+        anyhow::bail!("write failed ({status}): {txt}")
+    }
+}
+
+// ---- protocol subcommand: seed bundled defaults, or import from markdown file(s) ----
+// The base protocol templates ship in the binary; `import` reads the same frontmatter+body
+// format from any file or directory (the ov-style config-from-files capability).
+
+const BEHAVIORAL_MD: &str = include_str!("../templates/behavioral-discipline.md");
+const SAVE_MD: &str = include_str!("../templates/memory-save-discipline.md");
+
+async fn protocol() -> Result<()> {
+    match std::env::args().nth(2).unwrap_or_default().as_str() {
+        "seed" => protocol_seed().await,
+        "import" => {
+            let path = std::env::args()
+                .nth(3)
+                .ok_or_else(|| anyhow::anyhow!("usage: daimon protocol import <file-or-dir>"))?;
+            protocol_import(&path).await
+        }
+        other => {
+            eprintln!(
+                "daimon protocol {} - usage: daimon protocol <seed|import <file-or-dir>>",
+                if other.is_empty() { "(no subcommand)" } else { other }
+            );
+            std::process::exit(2);
+        }
+    }
+}
+
+async fn protocol_seed() -> Result<()> {
+    let (endpoint, tenant) = endpoint_tenant();
+    for md in [BEHAVIORAL_MD, SAVE_MD] {
+        let rec = parse_protocol_md(md)?;
+        let txt = post_memory(&endpoint, &tenant, &rec.record()).await?;
+        println!("seeded protocol '{}' -> {}", rec.title, txt);
+    }
+    Ok(())
+}
+
+async fn protocol_import(path: &str) -> Result<()> {
+    let (endpoint, tenant) = endpoint_tenant();
+    let p = std::path::Path::new(path);
+    let files: Vec<std::path::PathBuf> = if p.is_dir() {
+        let mut v: Vec<_> = std::fs::read_dir(p)?
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|q| q.extension().map(|e| e == "md").unwrap_or(false))
+            .collect();
+        v.sort();
+        v
+    } else {
+        vec![p.to_path_buf()]
+    };
+    if files.is_empty() {
+        anyhow::bail!("no .md protocol files found at {path}");
+    }
+    for f in files {
+        let md = std::fs::read_to_string(&f)?;
+        let rec = parse_protocol_md(&md)?;
+        let txt = post_memory(&endpoint, &tenant, &rec.record()).await?;
+        println!("imported '{}' from {} -> {}", rec.title, f.display(), txt);
+    }
+    Ok(())
+}
+
+struct ProtoRec {
+    title: String,
+    scope: String,
+    rules: String,
+    namespace: String,
+    body: String,
+}
+impl ProtoRec {
+    fn record(&self) -> serde_json::Value {
+        json!({
+            "kind": "protocol",
+            "namespace": self.namespace,
+            "title": self.title,
+            "body": self.body,
+            "fields": {"scope": self.scope, "rules": self.rules},
+            "tags": ["system", "protocol"],
+            "importance": 95
+        })
+    }
+}
+
+// Parse a protocol markdown file: optional frontmatter (title/namespace/scope/rules) fenced by
+// `---`, then the body. Only `title` is required; scope/rules default to a derived summary.
+fn parse_protocol_md(md: &str) -> Result<ProtoRec> {
+    let mut title = String::new();
+    let mut scope = String::new();
+    let mut rules = String::new();
+    let mut namespace = "shared-canonical/system/protocol".to_string();
+    let trimmed = md.trim_start();
+    let body;
+    if let Some(rest) = trimmed.strip_prefix("---") {
+        if let Some(end) = rest.find("\n---") {
+            for line in rest[..end].lines() {
+                if let Some((k, v)) = line.split_once(':') {
+                    let v = v.trim().to_string();
+                    match k.trim() {
+                        "title" => title = v,
+                        "scope" => scope = v,
+                        "rules" => rules = v,
+                        "namespace" => namespace = v,
+                        _ => {}
+                    }
+                }
+            }
+            body = rest[end + 4..].trim_start().to_string();
+        } else {
+            body = trimmed.to_string();
+        }
+    } else {
+        body = trimmed.to_string();
+    }
+    if title.is_empty() {
+        anyhow::bail!("protocol file missing 'title' in frontmatter");
+    }
+    if scope.is_empty() {
+        scope = "see body".to_string();
+    }
+    if rules.is_empty() {
+        rules = body.lines().next().unwrap_or("see body").chars().take(200).collect();
+        if rules.trim().is_empty() {
+            rules = "see body".to_string();
+        }
+    }
+    Ok(ProtoRec { title, scope, rules, namespace, body })
 }
 
 fn to_anyhow(e: daimon_memory_core::MemoryError) -> anyhow::Error {

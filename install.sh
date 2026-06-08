@@ -146,6 +146,14 @@ for _ in $(seq 1 30); do
   sleep 2
 done
 echo
+# Seed the default operating protocols (behavioral + save discipline) that every tool loads
+# at session start. Idempotent (Update-mode supersedes). Same in-image binary; import your own
+# later with: docker compose exec daimon-mcp daimon protocol import <file-or-dir>.
+echo "Seeding default protocols (behavioral + save discipline)..."
+( cd "$SELF_DIR" && docker compose exec -e DAIMON_TENANT="$TENANT" daimon-mcp daimon protocol seed ) \
+  || echo "  (run later: docker compose exec daimon-mcp daimon protocol seed)"
+
+echo
 # One-time persona setup. The pre-built `daimon` binary ships INSIDE the daimon-mcp image,
 # so we just invoke its wizard against the freshly-started server (no separate download). It
 # prompts for the AI's identity + your name/job and writes ONE persona record that every
@@ -166,4 +174,6 @@ echo "Next: connect a tool with the client installer, e.g."
 echo "  integrations/hermes/install.sh --endpoint http://localhost:${API_PORT}"
 echo "Persona: re-run the identity wizard anytime with"
 echo "  docker compose exec daimon-mcp daimon persona"
+echo "Protocols: seed defaults or import your own with"
+echo "  docker compose exec daimon-mcp daimon protocol seed | import <file-or-dir>"
 hr
