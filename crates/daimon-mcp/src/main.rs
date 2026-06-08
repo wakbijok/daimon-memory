@@ -15,6 +15,7 @@ use axum::{
 };
 use daimon_memory_core::{
     ContextMemory, ContextScope, MemoryError, MemoryUri, MemoryWrite, RecallFilters,
+    strip_tenant_segment,
 };
 use daimon_pg::{PgConfig, PgStore};
 use serde::Deserialize;
@@ -140,7 +141,7 @@ async fn store_h(
 ) -> impl IntoResponse {
     let scope = ContextScope::tenant(tenant_from(&headers, st.default_tenant));
     match st.store.store(&scope, w).await {
-        Ok(uri) => (StatusCode::CREATED, Json(json!({"uri": uri.to_string()}))),
+        Ok(uri) => (StatusCode::CREATED, Json(json!({"uri": uri.display_relative()}))),
         Err(MemoryError::Validation(m)) | Err(MemoryError::InvalidNamespace(m)) => (
             StatusCode::BAD_REQUEST,
             Json(json!({"error": "validation", "detail": m})),
@@ -257,7 +258,7 @@ pub(crate) async fn hybrid_recall(
         .map(|(uri, (kind, title, abs, score, srcs, importance, raw_kw, raw_sem))| {
             let boosted = score + (importance as f32 / 100.0) * IMPORTANCE_BOOST_MAX;
             json!({
-                "uri": uri, "kind": kind, "title": title, "abstract": abs,
+                "uri": strip_tenant_segment(&uri), "kind": kind, "title": title, "abstract": abs,
                 "score": boosted,
                 "importance": importance,
                 "sources": srcs,
@@ -291,7 +292,7 @@ async fn read_h(
     Query(q): Query<ReadQuery>,
 ) -> impl IntoResponse {
     let scope = ContextScope::tenant(tenant_from(&headers, st.default_tenant));
-    let uri = match MemoryUri::parse(&q.uri) {
+    let uri = match MemoryUri::parse_scoped(&q.uri, scope.tenant_id) {
         Ok(u) => u,
         Err(e) => {
             return (
@@ -301,7 +302,10 @@ async fn read_h(
         }
     };
     match st.store.read(&scope, &uri).await {
-        Ok(rec) => (StatusCode::OK, Json(json!({"record": rec}))),
+        Ok(mut rec) => {
+            rec.uri = strip_tenant_segment(&rec.uri);
+            (StatusCode::OK, Json(json!({"record": rec})))
+        }
         Err(MemoryError::NotFound(_)) => (
             StatusCode::NOT_FOUND,
             Json(json!({"error": "not_found", "uri": q.uri})),

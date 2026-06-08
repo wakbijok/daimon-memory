@@ -308,7 +308,7 @@ impl ContextMemory for PgStore {
         tx.commit().await.map_err(backend)?;
         match row {
             Some(r) => map_record(&r),
-            None => Err(MemoryError::NotFound(uri.to_string())),
+            None => Err(MemoryError::NotFound(uri.display_relative())),
         }
     }
 
@@ -358,7 +358,7 @@ impl ContextMemory for PgStore {
         .map_err(backend)?;
         tx.commit().await.map_err(backend)?;
         if n == 0 {
-            return Err(MemoryError::NotFound(uri.to_string()));
+            return Err(MemoryError::NotFound(uri.display_relative()));
         }
         Ok(())
     }

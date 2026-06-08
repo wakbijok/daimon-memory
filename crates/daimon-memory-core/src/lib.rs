@@ -19,7 +19,7 @@ pub mod memory;
 pub use error::{MemoryError, Result};
 pub use kind::{MemoryKind, WriteMode};
 pub use memory::ContextMemory;
-pub use namespace::{MemoryUri, Namespace, NamespaceRoot, Tier};
+pub use namespace::{MemoryUri, Namespace, NamespaceRoot, Tier, strip_tenant_segment};
 pub use record::{MemoryHit, MemoryRecord, MemoryWrite, RecallFilters};
 pub use scope::ContextScope;
 pub use validate::validate_write;

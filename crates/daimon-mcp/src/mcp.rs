@@ -14,6 +14,7 @@ use axum::{
 };
 use daimon_memory_core::{
     ContextMemory, ContextScope, MemoryKind, MemoryUri, MemoryWrite, RecallFilters,
+    strip_tenant_segment,
 };
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -228,7 +229,7 @@ async fn call_tool(st: &AppState, headers: &HeaderMap, id: &Value, params: &Valu
                 confidence: 1.0,
             };
             match st.store.store(&scope, w).await {
-                Ok(uri) => ok(id, tool_text(format!("stored: {uri}"))),
+                Ok(uri) => ok(id, tool_text(format!("stored: {}", uri.display_relative()))),
                 Err(e) => ok(id, tool_err(format!("{e}"))),
             }
         }
@@ -248,15 +249,23 @@ async fn call_tool(st: &AppState, headers: &HeaderMap, id: &Value, params: &Valu
                 limit: args.get("limit").and_then(|l| l.as_u64()).unwrap_or(10) as usize,
             };
             match st.store.find(&scope, &query, &filters).await {
-                Ok(hits) => ok(id, tool_text(serde_json::to_string_pretty(&hits).unwrap_or_default())),
+                Ok(mut hits) => {
+                    for h in &mut hits {
+                        h.uri = strip_tenant_segment(&h.uri);
+                    }
+                    ok(id, tool_text(serde_json::to_string_pretty(&hits).unwrap_or_default()))
+                }
                 Err(e) => ok(id, tool_err(format!("{e}"))),
             }
         }
         "read" => {
             let uri = args.get("uri").and_then(|u| u.as_str()).unwrap_or("");
-            match MemoryUri::parse(uri) {
+            match MemoryUri::parse_scoped(uri, scope.tenant_id) {
                 Ok(u) => match st.store.read(&scope, &u).await {
-                    Ok(rec) => ok(id, tool_text(serde_json::to_string_pretty(&rec).unwrap_or_default())),
+                    Ok(mut rec) => {
+                        rec.uri = strip_tenant_segment(&rec.uri);
+                        ok(id, tool_text(serde_json::to_string_pretty(&rec).unwrap_or_default()))
+                    }
                     Err(e) => ok(id, tool_err(format!("{e}"))),
                 },
                 Err(e) => ok(id, tool_err(format!("{e}"))),
@@ -304,7 +313,7 @@ async fn call_tool(st: &AppState, headers: &HeaderMap, id: &Value, params: &Valu
                     tool_text(if uris.is_empty() {
                         "(no records under this prefix)".to_string()
                     } else {
-                        uris.iter().map(|u| u.to_string()).collect::<Vec<_>>().join("\n")
+                        uris.iter().map(|u| u.display_relative()).collect::<Vec<_>>().join("\n")
                     }),
                 ),
                 Err(e) => ok(id, tool_err(format!("{e}"))),
@@ -319,7 +328,7 @@ async fn call_tool(st: &AppState, headers: &HeaderMap, id: &Value, params: &Valu
                     tool_err("refusing to forget a shared-canonical record without confirm=true".to_string()),
                 );
             }
-            match MemoryUri::parse(&uri_s) {
+            match MemoryUri::parse_scoped(&uri_s, scope.tenant_id) {
                 Ok(u) => match st.store.forget(&scope, &u).await {
                     Ok(()) => ok(id, tool_text(format!("forgotten: {uri_s}"))),
                     Err(e) => ok(id, tool_err(format!("{e}"))),
@@ -372,7 +381,7 @@ async fn do_store(
         confidence: 1.0,
     };
     match st.store.store(scope, w).await {
-        Ok(uri) => ok(id, tool_text(format!("stored: {uri}"))),
+        Ok(uri) => ok(id, tool_text(format!("stored: {}", uri.display_relative()))),
         Err(e) => ok(id, tool_err(format!("{e}"))),
     }
 }

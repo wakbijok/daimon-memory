@@ -157,6 +157,36 @@ impl MemoryUri {
             tier,
         })
     }
+
+    /// Render the tenant-relative client form: `daimon://{namespace}/{kind}/{id}#{tier}`.
+    /// Drops the tenant segment (the client re-attaches it from request scope on input).
+    /// Mirrors `Display` exactly minus the tenant slot, so it round-trips with `parse_scoped`.
+    pub fn display_relative(&self) -> String {
+        format!(
+            "daimon://{}/{}/{}#{}",
+            self.namespace,
+            self.record_type.as_str(),
+            self.record_id,
+            self.tier.as_str()
+        )
+    }
+
+    /// Parse a client-supplied URI that may be **full** (tenant as first path segment) or
+    /// **tenant-relative** (namespace root first). Detection: the first path segment after
+    /// `daimon://` is tried as a `Uuid`; if it parses, the URI is full and we delegate to
+    /// `parse` unchanged; otherwise we re-attach `default_tenant` and delegate to `parse`.
+    pub fn parse_scoped(s: &str, default_tenant: Uuid) -> Result<Self> {
+        let rest = s
+            .strip_prefix("daimon://")
+            .ok_or_else(|| MemoryError::InvalidUri(format!("missing daimon:// scheme: {s}")))?;
+        let path = rest.split('#').next().unwrap_or(rest);
+        let first = path.split('/').next().unwrap_or("");
+        if Uuid::parse_str(first).is_ok() {
+            MemoryUri::parse(s)
+        } else {
+            MemoryUri::parse(&format!("daimon://{default_tenant}/{rest}"))
+        }
+    }
 }
 
 impl fmt::Display for MemoryUri {
@@ -170,6 +200,20 @@ impl fmt::Display for MemoryUri {
             self.record_id,
             self.tier.as_str()
         )
+    }
+}
+
+/// Strip the `{tenant}/` segment from a full `daimon://{tenant}/...` string, yielding the
+/// tenant-relative client form `daimon://{rest}`. Used for the raw `uri_path` strings carried
+/// by `MemoryHit`/`MemoryRecord` (which have no `#tier`). Returns the input unchanged if it is
+/// not a recognizable full URI (defensive; the DB always stores the full form).
+pub fn strip_tenant_segment(uri: &str) -> String {
+    match uri.strip_prefix("daimon://") {
+        Some(rest) => match rest.split_once('/') {
+            Some((_tenant, tail)) => format!("daimon://{tail}"),
+            None => uri.to_string(),
+        },
+        None => uri.to_string(),
     }
 }
 
@@ -234,5 +278,54 @@ mod tests {
     fn uri_rejects_garbage() {
         assert!(MemoryUri::parse("https://x/y").is_err());
         assert!(MemoryUri::parse("daimon://too/few").is_err());
+    }
+
+    #[test]
+    fn display_relative_drops_tenant() {
+        let full = "daimon://00000000-0000-0000-0000-000000000001/shared-canonical/coding/decision/00000000-0000-0000-0000-0000000000aa#L0";
+        let uri = MemoryUri::parse(full).unwrap();
+        assert_eq!(
+            uri.display_relative(),
+            "daimon://shared-canonical/coding/decision/00000000-0000-0000-0000-0000000000aa#L0"
+        );
+    }
+
+    #[test]
+    fn parse_scoped_accepts_full() {
+        let tenant = Uuid::parse_str("00000000-0000-0000-0000-000000000099").unwrap();
+        let full = "daimon://00000000-0000-0000-0000-000000000001/shared-canonical/coding/decision/00000000-0000-0000-0000-0000000000aa#L0";
+        let uri = MemoryUri::parse_scoped(full, tenant).unwrap();
+        // Full URI keeps its own embedded tenant, NOT the default.
+        assert_eq!(uri.tenant_id, Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap());
+        assert_eq!(uri.to_string(), full);
+    }
+
+    #[test]
+    fn parse_scoped_accepts_relative_and_uses_default_tenant() {
+        let tenant = Uuid::parse_str("00000000-0000-0000-0000-000000000099").unwrap();
+        let rel = "daimon://shared-canonical/coding/decision/00000000-0000-0000-0000-0000000000aa#L0";
+        let uri = MemoryUri::parse_scoped(rel, tenant).unwrap();
+        assert_eq!(uri.tenant_id, tenant);
+        assert_eq!(uri.record_type, MemoryKind::Decision);
+        assert_eq!(uri.tier, Tier::L0);
+        assert_eq!(uri.display_relative(), rel);
+    }
+
+    #[test]
+    fn parse_scoped_relative_defaults_to_l1() {
+        let tenant = Uuid::parse_str("00000000-0000-0000-0000-000000000099").unwrap();
+        let rel = "daimon://session/run-7/runbook/00000000-0000-0000-0000-0000000000bb";
+        let uri = MemoryUri::parse_scoped(rel, tenant).unwrap();
+        assert_eq!(uri.tenant_id, tenant);
+        assert_eq!(uri.tier, Tier::L1);
+    }
+
+    #[test]
+    fn strip_tenant_segment_drops_first_segment() {
+        let full = "daimon://00000000-0000-0000-0000-000000000001/shared-canonical/coding/decision/00000000-0000-0000-0000-0000000000aa";
+        assert_eq!(
+            strip_tenant_segment(full),
+            "daimon://shared-canonical/coding/decision/00000000-0000-0000-0000-0000000000aa"
+        );
     }
 }
