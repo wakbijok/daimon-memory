@@ -30,7 +30,20 @@ export const SIGNALS = [
 // Tool names that count as "a save already happened this turn" (suppresses the nudge).
 export const SAVE_TOOLS = new Set([
   "remember", "log_decision", "log_lesson", "log_incident", "add_reminder",
+  "daimon_remember",
 ]);
+
+// Match a tool-call name to a save tool, tolerating MCP namespacing (server.tool,
+// server__tool, server/tool) since Codex/MCP may prefix the bare tool name.
+export function isSaveTool(name) {
+  const n = String(name || "").toLowerCase();
+  for (const s of SAVE_TOOLS) {
+    if (n === s || n.endsWith("." + s) || n.endsWith("__" + s) || n.endsWith("/" + s) || n.endsWith(":" + s)) {
+      return true;
+    }
+  }
+  return false;
+}
 
 export function scanSignal(text) {
   if (!text) return null;

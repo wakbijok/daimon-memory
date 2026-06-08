@@ -5,7 +5,7 @@
 // Runs alongside auto-recall.mjs (both inject additionalContext; Claude Code concatenates).
 import { readFileSync } from "node:fs";
 import { readStdin } from "./lib/daimon.mjs";
-import { NUDGE_ON, SAVE_TOOLS, scanSignal, loadState, saveState, decide } from "./nudge-lib.mjs";
+import { NUDGE_ON, isSaveTool, scanSignal, loadState, saveState, decide } from "./nudge-lib.mjs";
 
 const input = await readStdin();
 if (!NUDGE_ON) process.exit(0);
@@ -50,7 +50,7 @@ function lastAssistantTurn(path) {
 }
 
 const { text, tools } = lastAssistantTurn(tpath);
-const didSave = tools.some((t) => SAVE_TOOLS.has(t));
+const didSave = tools.some(isSaveTool);
 const signal = scanSignal(text);
 const state = loadState(sessionId);
 const nudge = decide(state, { signal, didSave });

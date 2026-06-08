@@ -4,7 +4,7 @@
 // reminder. Does NOT auto-write (curated-not-raw). Best-effort; always exits 0.
 import { readFileSync } from "node:fs";
 import { readStdin } from "./lib/daimon.mjs";
-import { NUDGE_ON, SAVE_TOOLS, SIGNALS } from "./nudge-lib.mjs";
+import { NUDGE_ON, isSaveTool, SIGNALS } from "./nudge-lib.mjs";
 
 const input = await readStdin();
 if (!NUDGE_ON) process.exit(0);
@@ -41,7 +41,7 @@ function turns(path) {
 
 const found = [];
 for (const t of turns(tpath)) {
-  if (t.tools.some((x) => SAVE_TOOLS.has(x))) continue; // saved in this turn -> covered
+  if (t.tools.some(isSaveTool)) continue; // saved in this turn -> covered
   for (const s of SIGNALS) {
     if (s.re.test(t.text)) { found.push(s.cls); break; }
   }
