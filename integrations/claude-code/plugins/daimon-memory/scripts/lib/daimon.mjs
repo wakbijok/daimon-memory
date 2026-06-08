@@ -4,7 +4,7 @@
 
 export const ENDPOINT = (process.env.DAIMON_ENDPOINT || "http://localhost:8080").replace(/\/+$/, "");
 export const TENANT = process.env.DAIMON_TENANT || "00000000-0000-0000-0000-0000000000d1";
-export const NAMESPACE = process.env.DAIMON_NAMESPACE || "claude-private/notes";
+export const NAMESPACE = process.env.DAIMON_NAMESPACE || "agent/lessons";
 
 // Read the hook payload Claude Code passes on stdin.
 export async function readStdin() {
@@ -82,12 +82,12 @@ export async function read(uri) {
   }
 }
 
-// Load the canonical persona + protocols from shared-canonical/system in FULL (recall only
-// returns truncated abstracts; the persona must arrive verbatim). Persona first, then the
-// protocols. Best-effort: "" if nothing is stored or the backend is down. Injected ONCE per
-// session at SessionStart, never per turn.
+// Load the canonical persona + protocols (the boot layer, now under agent/persona and
+// agent/protocol) in FULL (recall only returns truncated abstracts; the persona must arrive
+// verbatim). Persona first, then the protocols. Best-effort: "" if nothing is stored or the
+// backend is down. Injected ONCE per session at SessionStart, never per turn.
 export async function loadSystemBlock() {
-  const hits = await recall("", { limit: 10, namespacePrefix: "shared-canonical/system" });
+  const hits = await recall("", { limit: 20, namespacePrefix: "agent/" });
   const wanted = hits.filter((h) => h.kind === "persona" || h.kind === "protocol");
   wanted.sort((a, b) => (a.kind === "persona" ? -1 : b.kind === "persona" ? 1 : 0));
   const sections = [];

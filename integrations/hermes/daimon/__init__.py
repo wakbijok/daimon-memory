@@ -16,7 +16,7 @@ extraction; we persist the result as a typed, deterministic record.
 Config (env, set by the installer into ~/.hermes/.env):
   DAIMON_ENDPOINT   (required)  e.g. http://localhost:8080  or  http://localhost:8080
   DAIMON_TENANT     (optional)  tenant UUID; default the dev tenant
-  DAIMON_NAMESPACE  (optional)  default capture namespace; default hermes-private/notes
+  DAIMON_NAMESPACE  (optional)  default capture namespace; default agent/lessons
   DAIMON_API_KEY    (optional)  bearer token, if daimon-mcp auth is enabled
 """
 
@@ -34,7 +34,7 @@ from agent.memory_provider import MemoryProvider
 logger = logging.getLogger(__name__)
 
 _DEFAULT_TENANT = "00000000-0000-0000-0000-0000000000d1"
-_DEFAULT_NAMESPACE = "hermes-private/notes"
+_DEFAULT_NAMESPACE = "agent/lessons"
 _RECALL_LIMIT = 6
 _HTTP_TIMEOUT = 6.0
 
@@ -99,8 +99,8 @@ DAIMON_REMEMBER_SCHEMA = {
             },
             "namespace": {
                 "type": "string",
-                "description": "Optional. Default per config (e.g. hermes-private/notes "
-                "or shared-canonical/<area> for team-wide knowledge).",
+                "description": "Optional. Default per config (e.g. agent/lessons, "
+                "resources/<project> for project knowledge, or user/preferences for user rules).",
             },
             "tags": {"type": "array", "items": {"type": "string"}},
             "importance": {"type": "integer", "description": "0-100 rerank boost."},
@@ -290,11 +290,11 @@ class DaimonMemoryProvider(MemoryProvider):
         return (self._system_block + "\n\n" + tail) if self._system_block else tail
 
     def _load_system_block(self) -> str:
-        """Canonical persona + operating protocols from shared-canonical/system (full bodies),
-        loaded once per session and injected as the instruction layer (not user content)."""
+        """Canonical persona + operating protocols from agent/persona + agent/protocol (full
+        bodies), loaded once per session and injected as the instruction layer (not user content)."""
         if not self._client:
             return ""
-        hits = self._client.recall("", namespace_prefix="shared-canonical/system", limit=10)
+        hits = self._client.recall("", namespace_prefix="agent/", limit=20)
         wanted = [h for h in hits if h.get("kind") in ("persona", "protocol")]
         wanted.sort(key=lambda h: 0 if h.get("kind") == "persona" else 1)
         sections = []
@@ -398,7 +398,7 @@ class DaimonMemoryProvider(MemoryProvider):
         title = text.splitlines()[0][:120]
         payload = {
             "kind": "agent_lesson",
-            "namespace": f"hermes-private/{ 'user' if target == 'user' else 'memory' }",
+            "namespace": "user/preferences" if target == "user" else "agent/lessons",
             "title": title,
             "body": text,
             "fields": {"lesson": text},

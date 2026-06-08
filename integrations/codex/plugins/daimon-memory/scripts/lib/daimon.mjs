@@ -1,30 +1,25 @@
-// Shared config + HTTP helpers for the daimon-memory Codex plugin.
-// Config resolution: env (DAIMON_ENDPOINT/DAIMON_TENANT) -> daimon.config.json written
-// by the installer (Codex does not reliably pass env to hook subprocesses) -> defaults.
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
+// Shared config + HTTP helpers for the daimon-memory Claude Code plugin.
+// Config comes from env (the installer writes these into Claude Code settings.json `env`,
+// or set them in your shell). Defaults are dev-friendly.
 
-function fileConfig() {
-  try {
-    const here = dirname(fileURLToPath(import.meta.url));
-    return JSON.parse(readFileSync(join(here, "daimon.config.json"), "utf8"));
-  } catch { return {}; }
-}
-const _c = fileConfig();
-export const ENDPOINT = (process.env.DAIMON_ENDPOINT || _c.endpoint || "http://localhost:8080").replace(/\/+$/, "");
-export const TENANT = process.env.DAIMON_TENANT || _c.tenant || "00000000-0000-0000-0000-0000000000d1";
+export const ENDPOINT = (process.env.DAIMON_ENDPOINT || "http://localhost:8080").replace(/\/+$/, "");
+export const TENANT = process.env.DAIMON_TENANT || "00000000-0000-0000-0000-0000000000d1";
+export const NAMESPACE = process.env.DAIMON_NAMESPACE || "agent/lessons";
 
+// Read the hook payload Claude Code passes on stdin.
 export async function readStdin() {
   const chunks = [];
-  try { for await (const c of process.stdin) chunks.push(c); } catch { /* ignore */ }
+  try {
+    for await (const c of process.stdin) chunks.push(c);
+  } catch { /* ignore */ }
   const raw = Buffer.concat(chunks).toString("utf8").trim();
   if (!raw) return {};
   try { return JSON.parse(raw); } catch { return {}; }
 }
 
-// POST /v1/recall with a hard timeout. Returns hits[] or [] on ANY failure.
-// Empty query is allowed: the server returns recent, high-importance records.
+// POST /v1/recall with a hard timeout. Returns hits[] or [] on ANY failure
+// (a memory backend hiccup must never break the user's turn). An empty query is
+// allowed: the server returns recent, high-importance records (the "recent context").
 export async function recall(query, { limit = 6, kind = null, namespacePrefix = null } = {}) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 6000);
@@ -41,8 +36,31 @@ export async function recall(query, { limit = 6, kind = null, namespacePrefix = 
     if (!r.ok) return [];
     const j = await r.json();
     return Array.isArray(j.hits) ? j.hits : [];
-  } catch { return []; }
-  finally { clearTimeout(timer); }
+  } catch {
+    return [];
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// POST /v1/memory (curated capture). Returns true on store or validation-skip, false on
+// network failure. Best-effort: never throws.
+export async function store(payload) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 6000);
+  try {
+    const r = await fetch(`${ENDPOINT}/v1/memory`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-daimon-tenant": TENANT },
+      body: JSON.stringify(payload),
+      signal: ctrl.signal,
+    });
+    return r.ok || r.status === 400; // 400 = validation reject; nothing more to do
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 // GET /v1/read - full record body by uri. Best-effort; null on failure.
@@ -57,15 +75,19 @@ export async function read(uri) {
     if (!r.ok) return null;
     const j = await r.json();
     return j.record || j || null;
-  } catch { return null; }
-  finally { clearTimeout(timer); }
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
-// Load the canonical persona + protocols from shared-canonical/system in FULL (recall returns
-// truncated abstracts; persona must arrive verbatim). Persona first, then protocols.
-// Best-effort: "" if nothing stored or backend down. Injected ONCE per session at SessionStart.
+// Load the canonical persona + protocols (the boot layer, now under agent/persona and
+// agent/protocol) in FULL (recall only returns truncated abstracts; the persona must arrive
+// verbatim). Persona first, then the protocols. Best-effort: "" if nothing is stored or the
+// backend is down. Injected ONCE per session at SessionStart, never per turn.
 export async function loadSystemBlock() {
-  const hits = await recall("", { limit: 10, namespacePrefix: "shared-canonical/system" });
+  const hits = await recall("", { limit: 20, namespacePrefix: "agent/" });
   const wanted = hits.filter((h) => h.kind === "persona" || h.kind === "protocol");
   wanted.sort((a, b) => (a.kind === "persona" ? -1 : b.kind === "persona" ? 1 : 0));
   const sections = [];
@@ -81,6 +103,7 @@ export async function loadSystemBlock() {
     + "\n</daimon-persona>";
 }
 
+// Format hits into a compact, labelled block.
 export function formatHits(hits, heading) {
   if (!hits || !hits.length) return "";
   const lines = [heading];
@@ -91,8 +114,8 @@ export function formatHits(hits, heading) {
   return lines.join("\n");
 }
 
-// Codex UserPromptSubmit/SessionStart use the same hookSpecificOutput.additionalContext
-// protocol as Claude Code. Always exit 0 (best-effort).
+// Emit a context injection for the given hook event, then exit 0. Always safe:
+// if there's nothing to inject we still exit 0 (the turn proceeds unchanged).
 export function injectAndExit(eventName, text) {
   if (text && text.trim()) {
     process.stdout.write(JSON.stringify({
@@ -100,24 +123,4 @@ export function injectAndExit(eventName, text) {
     }));
   }
   process.exit(0);
-}
-
-// POST /v1/memory (curated capture). Returns true on store or validation-skip (400), false on
-// network failure. Best-effort: never throws. Used by mirror-memory.mjs.
-export async function store(payload) {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 6000);
-  try {
-    const r = await fetch(`${ENDPOINT}/v1/memory`, {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-daimon-tenant": TENANT },
-      body: JSON.stringify(payload),
-      signal: ctrl.signal,
-    });
-    return r.ok || r.status === 400;
-  } catch {
-    return false;
-  } finally {
-    clearTimeout(timer);
-  }
 }

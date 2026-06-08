@@ -2,7 +2,7 @@
 // SessionStart side-effect hook. Codex has no SessionEnd and writes its native memory
 // ASYNCHRONOUSLY hours after a thread idles, so we mirror the accumulated store on the NEXT
 // boot. Reads Codex native memory (SQLite at ~/.codex/memories_1.sqlite -> stage1_outputs)
-// and mirrors each entry into daimon as an agent_lesson in codex-private/memory. Injects
+// and mirrors each entry into daimon as an agent_lesson in agent/lessons. Injects
 // nothing into context. Best-effort: always exits 0. Dedup: a client watermark on
 // generated_at (skip unchanged rows) + the server's content-hash (idempotent re-store).
 // Zero npm deps: uses the built-in node:sqlite, opened read-only (never blocks Codex's writer).
@@ -58,7 +58,7 @@ for (const r of rows) {
 
   await store({
     kind: "agent_lesson",
-    namespace: "codex-private/memory",
+    namespace: "agent/lessons",
     title,
     body: text,
     fields: { lesson: text },

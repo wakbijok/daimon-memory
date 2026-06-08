@@ -37,7 +37,7 @@ for (const f of files) {
 
   await store({
     kind: "agent_lesson",
-    namespace: "claude-private/memory",
+    namespace: "agent/lessons",
     title,
     body: text,
     fields: { lesson: text },

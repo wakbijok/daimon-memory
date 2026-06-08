@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // SessionStart hook. Injects, once per session: (1) the canonical PERSONA + operating
-// protocols from shared-canonical/system (the hook-injected instruction layer, full bodies),
+// protocols from agent/persona + agent/protocol (the hook-injected instruction layer, full bodies),
 // then (2) recent high-signal shared memory (empty-query recall, excluding the system layer
 // so persona records are not shown twice). Seeds the session "already injected" set so the
 // per-turn recall stays incremental. Best-effort: any failure injects nothing.
@@ -17,7 +17,10 @@ const [persona, recent] = await Promise.all([
   recall("", { limit: 5 }),
 ]);
 
-const recentHits = recent.filter((h) => !(h.uri || "").includes("/shared-canonical/system/"));
+const recentHits = recent.filter((h) => {
+  const u = h.uri || "";
+  return !u.includes("/agent/persona/") && !u.includes("/agent/protocol/");
+});
 const recentBlock = formatHits(
   recentHits,
   `<daimon-memory>\n[daimon-memory connected (${ENDPOINT}). Recent shared context across your tools:]`,
