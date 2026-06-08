@@ -1,5 +1,16 @@
 {
   "hooks": {
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/precompact.mjs",
+            "timeout": 8
+          }
+        ]
+      }
+    ],
     "SessionStart": [
       {
         "hooks": [

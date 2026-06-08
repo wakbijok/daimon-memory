@@ -73,7 +73,12 @@ echo
 echo "  /plugin marketplace add $SELF_DIR"
 echo "  /plugin install daimon-memory@daimon-memory"
 echo
-echo "After restart: relevant memory is auto-recalled into each prompt, and the"
-echo "daimon recall/remember/read tools + the /daimon command are available."
+echo "After restart the plugin loads automatically (hooks + MCP), giving you:"
+echo "  - persona + operating disciplines injected at session start"
+echo "  - relevant memory auto-recalled into each prompt (incremental, deduped)"
+echo "  - save-nudges + an auto-memory mirror, so capture keeps flowing"
+echo "  - compaction continuity: working context is snapshotted before a compaction"
+echo "    and re-injected after, so you keep your place (PreCompact + SessionStart)"
+echo "  - the daimon recall/remember/read tools + the /daimon command"
 echo "Revert config: restore $SETTINGS.bak-daimon"
 hr
