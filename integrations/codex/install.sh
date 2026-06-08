@@ -106,7 +106,7 @@ echo "registering marketplace + installing plugin..."
 hr; bold "Done"
 echo "Restart Codex. Relevant memory auto-recalls into each prompt; the daimon MCP tools"
 echo "(recall/remember/read) are available. Backend: $ENDPOINT"
-echo "Codex native memory enabled; prior-session memories mirror into daimon (codex-private/memory)"
+echo "Codex native memory enabled; prior-session memories mirror into daimon (agent/lessons)"
 echo "on the next session start (Codex writes native memory only after a thread idles ~6h)."
 echo "Uninstall: $CODEX plugin remove daimon-memory ; $CODEX plugin marketplace remove daimon-memory"
 hr

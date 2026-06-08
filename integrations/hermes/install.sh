@@ -78,7 +78,7 @@ hr
 
 ask ENDPOINT  "daimon-memory endpoint - the URL where your daimon-memory server is running" "http://localhost:8080"
 ask TENANT    "Tenant ID - which memory space Hermes uses (must match your other tools)"    "$DEV_TENANT"
-ask NAMESPACE "Default namespace - where Hermes files the memories it captures"             "hermes-private/notes"
+ask NAMESPACE "Default namespace - where Hermes files the memories it captures"             "agent/lessons"
 
 # Best-effort reachability check (informational only).
 if command -v curl >/dev/null 2>&1; then
