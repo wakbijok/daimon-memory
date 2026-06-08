@@ -53,7 +53,7 @@ fn tool_definitions() -> Value {
                     "required": ["kind", "namespace", "title", "body"],
                     "properties": {
                         "kind": {"type": "string", "description": "decision|runbook|incident_summary|service_topology|known_failure_mode|remediation_pattern|project_convention|agent_lesson|resource_summary|persona|protocol|reminder"},
-                        "namespace": {"type": "string", "description": "e.g. shared-canonical/coding/decisions"},
+                        "namespace": {"type": "string", "description": "e.g. resources/coding/decisions"},
                         "title": {"type": "string"},
                         "body": {"type": "string"},
                         "fields": {"type": "object", "description": "kind-specific required fields (e.g. decision needs context+rationale)"},
@@ -92,7 +92,7 @@ fn tool_definitions() -> Value {
                     "context": {"type": "string", "description": "the situation that prompted the choice"},
                     "rationale": {"type": "string", "description": "why this option; trade-offs; what was rejected"},
                     "body": {"type": "string", "description": "optional full detail; defaults to context + rationale"},
-                    "namespace": {"type": "string", "description": "default shared-canonical/coding/decisions"},
+                    "namespace": {"type": "string", "description": "default resources/coding/decisions"},
                     "importance": {"type": "integer", "minimum": 0, "maximum": 100}
                 }}
             },
@@ -103,7 +103,7 @@ fn tool_definitions() -> Value {
                     "title": {"type": "string"},
                     "lesson": {"type": "string", "description": "the reusable insight, phrased so it prevents the mistake next time"},
                     "body": {"type": "string"},
-                    "namespace": {"type": "string", "description": "default shared-canonical/lessons"},
+                    "namespace": {"type": "string", "description": "default agent/lessons"},
                     "importance": {"type": "integer", "minimum": 0, "maximum": 100}
                 }}
             },
@@ -117,7 +117,7 @@ fn tool_definitions() -> Value {
                     "severity": {"type": "string", "description": "optional: minor|moderate|major"},
                     "prevention": {"type": "string", "description": "optional: specific action to prevent recurrence"},
                     "body": {"type": "string"},
-                    "namespace": {"type": "string", "description": "default shared-canonical/incidents"},
+                    "namespace": {"type": "string", "description": "default resources/incidents"},
                     "importance": {"type": "integer", "minimum": 0, "maximum": 100}
                 }}
             },
@@ -128,7 +128,7 @@ fn tool_definitions() -> Value {
                     "title": {"type": "string"},
                     "due": {"type": "string", "description": "absolute date or datetime, e.g. 2026-06-15"},
                     "body": {"type": "string"},
-                    "namespace": {"type": "string", "description": "default shared-canonical/reminders"},
+                    "namespace": {"type": "string", "description": "default agent/workstream"},
                     "importance": {"type": "integer", "minimum": 0, "maximum": 100}
                 }}
             },
@@ -136,15 +136,15 @@ fn tool_definitions() -> Value {
                 "name": "browse",
                 "description": "List memory uris under a namespace prefix. Use before saving to avoid duplicates, or to explore what exists.",
                 "inputSchema": {"type": "object", "required": ["prefix"], "properties": {
-                    "prefix": {"type": "string", "description": "e.g. shared-canonical/coding/decisions"}
+                    "prefix": {"type": "string", "description": "e.g. resources/coding/decisions"}
                 }}
             },
             {
                 "name": "forget",
-                "description": "Retract a memory by uri (marks it forgotten). Records in a *-private namespace forget freely; shared-canonical records require confirm=true.",
+                "description": "Retract a memory by uri (marks it forgotten). user/ and session/ records forget freely; durable agent/ and resources/ records require confirm=true.",
                 "inputSchema": {"type": "object", "required": ["uri"], "properties": {
                     "uri": {"type": "string"},
-                    "confirm": {"type": "boolean", "description": "must be true to forget a shared-canonical record"}
+                    "confirm": {"type": "boolean", "description": "must be true to forget a durable agent/ or resources/ record"}
                 }}
             }
         ]
@@ -276,13 +276,13 @@ async fn call_tool(st: &AppState, headers: &HeaderMap, id: &Value, params: &Valu
             f.insert("context".into(), Value::String(sarg(&args, "context")));
             f.insert("rationale".into(), Value::String(sarg(&args, "rationale")));
             let body = body_or(&args, &format!("{}\n\n{}", sarg(&args, "context"), sarg(&args, "rationale")));
-            do_store(st, &scope, id, MemoryKind::Decision, ns_or(&args, "shared-canonical/coding/decisions"), sarg(&args, "title"), body, f, imp(&args)).await
+            do_store(st, &scope, id, MemoryKind::Decision, ns_or(&args, "resources/coding/decisions"), sarg(&args, "title"), body, f, imp(&args)).await
         }
         "log_lesson" => {
             let mut f = serde_json::Map::new();
             f.insert("lesson".into(), Value::String(sarg(&args, "lesson")));
             let body = body_or(&args, &sarg(&args, "lesson"));
-            do_store(st, &scope, id, MemoryKind::AgentLesson, ns_or(&args, "shared-canonical/lessons"), sarg(&args, "title"), body, f, imp(&args)).await
+            do_store(st, &scope, id, MemoryKind::AgentLesson, ns_or(&args, "agent/lessons"), sarg(&args, "title"), body, f, imp(&args)).await
         }
         "log_incident" => {
             let mut f = serde_json::Map::new();
@@ -297,13 +297,13 @@ async fn call_tool(st: &AppState, headers: &HeaderMap, id: &Value, params: &Valu
                 f.insert("prevention".into(), Value::String(prev));
             }
             let body = body_or(&args, &format!("{}\n\n{}", sarg(&args, "impact"), sarg(&args, "resolution")));
-            do_store(st, &scope, id, MemoryKind::IncidentSummary, ns_or(&args, "shared-canonical/incidents"), sarg(&args, "title"), body, f, imp(&args)).await
+            do_store(st, &scope, id, MemoryKind::IncidentSummary, ns_or(&args, "resources/incidents"), sarg(&args, "title"), body, f, imp(&args)).await
         }
         "add_reminder" => {
             let mut f = serde_json::Map::new();
             f.insert("due".into(), Value::String(sarg(&args, "due")));
             let body = body_or(&args, &sarg(&args, "title"));
-            do_store(st, &scope, id, MemoryKind::Reminder, ns_or(&args, "shared-canonical/reminders"), sarg(&args, "title"), body, f, imp(&args)).await
+            do_store(st, &scope, id, MemoryKind::Reminder, ns_or(&args, "agent/workstream"), sarg(&args, "title"), body, f, imp(&args)).await
         }
         "browse" => {
             let prefix = sarg(&args, "prefix");
@@ -322,10 +322,12 @@ async fn call_tool(st: &AppState, headers: &HeaderMap, id: &Value, params: &Valu
         "forget" => {
             let uri_s = sarg(&args, "uri");
             let confirm = args.get("confirm").and_then(|c| c.as_bool()).unwrap_or(false);
-            if !uri_s.contains("-private/") && !confirm {
+            // Durable buckets (agent/, resources/) are confirm-gated; user/ + session/ forget freely.
+            let durable = uri_s.contains("/agent/") || uri_s.contains("/resources/");
+            if durable && !confirm {
                 return ok(
                     id,
-                    tool_err("refusing to forget a shared-canonical record without confirm=true".to_string()),
+                    tool_err("refusing to forget a durable agent/ or resources/ record without confirm=true".to_string()),
                 );
             }
             match MemoryUri::parse_scoped(&uri_s, scope.tenant_id) {

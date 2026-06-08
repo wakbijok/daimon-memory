@@ -73,7 +73,7 @@ mod tests {
     fn base_decision() -> MemoryWrite {
         MemoryWrite {
             kind: MemoryKind::Decision,
-            namespace: "shared-canonical/coding/decisions".into(),
+            namespace: "resources/coding/decisions".into(),
             title: "Use Postgres as canonical store".into(),
             body: "Adopt Postgres + Qdrant split.".into(),
             fields: json!({"context": "needed a store", "rationale": "rebuildable index"})
@@ -120,7 +120,7 @@ mod tests {
     #[test]
     fn bad_namespace_fails() {
         let mut w = base_decision();
-        w.namespace = "resources/coding".into(); // superseded vocabulary
+        w.namespace = "shared-canonical/coding".into(); // old root, superseded by G1
         assert!(matches!(validate_write(&w), Err(MemoryError::InvalidNamespace(_))));
     }
 

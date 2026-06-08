@@ -80,7 +80,7 @@ pub struct MemoryHit {
 pub struct RecallFilters {
     #[serde(default)]
     pub kind: Option<MemoryKind>,
-    /// Namespace path prefix (e.g. `shared-canonical/coding`).
+    /// Namespace path prefix (e.g. `resources/coding`).
     #[serde(default)]
     pub namespace_prefix: Option<String>,
     #[serde(default)]

@@ -379,7 +379,7 @@ mod tests {
             }
             MemoryWrite {
                 kind: MemoryKind::Decision,
-                namespace: "shared-canonical/x".into(),
+                namespace: "resources/x".into(),
                 title: "t".into(),
                 body: "b".into(),
                 fields,
@@ -404,7 +404,7 @@ mod tests {
     fn uri_is_parseable() {
         let id = Uuid::new_v4();
         let t = Uuid::new_v4();
-        let s = uri_of(t, "shared-canonical/coding/decisions", MemoryKind::Decision, id);
+        let s = uri_of(t, "resources/coding/decisions", MemoryKind::Decision, id);
         let uri = MemoryUri::parse(&s).unwrap();
         assert_eq!(uri.record_id, id);
         assert_eq!(uri.tenant_id, t);

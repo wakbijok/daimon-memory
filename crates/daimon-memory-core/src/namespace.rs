@@ -4,13 +4,17 @@ use std::fmt;
 use std::str::FromStr;
 use uuid::Uuid;
 
-/// Namespace root. Reserved roots plus `<consumer>-private`.
+/// Namespace root. Single-user, single-agent: three content buckets plus ephemeral session.
+/// Multi-consumer isolation, if ever needed, is the daimon SYSTEM's job (daimon-graph /
+/// daimon-core), not this content-tier crate. Tenant isolation is Postgres RLS, not the root.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NamespaceRoot {
-    /// `shared-canonical/` - the shared team brain (control-gated writes).
-    SharedCanonical,
-    /// `<consumer>-private/` - per-consumer scratch (e.g. `izu-private`).
-    ConsumerPrivate(String),
+    /// `user/` - the principal: profile, job, preferences, ACL markers. Thin.
+    User,
+    /// `agent/` - the worker's self and work: persona, protocol, skills, lessons, decisions, workstream.
+    Agent,
+    /// `resources/` - the world/work: projects, codebases, homelab/infra knowledge.
+    Resources,
     /// `session/` - ephemeral, TTL'd.
     Session,
 }
@@ -18,16 +22,11 @@ pub enum NamespaceRoot {
 impl NamespaceRoot {
     fn parse(s: &str) -> Result<Self> {
         match s {
-            "shared-canonical" => Ok(NamespaceRoot::SharedCanonical),
+            "user" => Ok(NamespaceRoot::User),
+            "agent" => Ok(NamespaceRoot::Agent),
+            "resources" => Ok(NamespaceRoot::Resources),
             "session" => Ok(NamespaceRoot::Session),
-            other => {
-                if let Some(consumer) = other.strip_suffix("-private") {
-                    if is_consumer(consumer) {
-                        return Ok(NamespaceRoot::ConsumerPrivate(consumer.to_string()));
-                    }
-                }
-                Err(MemoryError::InvalidNamespace(format!("bad root: {other}")))
-            }
+            other => Err(MemoryError::InvalidNamespace(format!("bad root: {other}"))),
         }
     }
 }
@@ -35,8 +34,9 @@ impl NamespaceRoot {
 impl fmt::Display for NamespaceRoot {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            NamespaceRoot::SharedCanonical => write!(f, "shared-canonical"),
-            NamespaceRoot::ConsumerPrivate(c) => write!(f, "{c}-private"),
+            NamespaceRoot::User => write!(f, "user"),
+            NamespaceRoot::Agent => write!(f, "agent"),
+            NamespaceRoot::Resources => write!(f, "resources"),
             NamespaceRoot::Session => write!(f, "session"),
         }
     }
@@ -217,11 +217,6 @@ pub fn strip_tenant_segment(uri: &str) -> String {
     }
 }
 
-/// Consumer label: `[a-z0-9]([a-z0-9-])*` (no `-private` suffix logic here).
-fn is_consumer(s: &str) -> bool {
-    is_valid_segment(s)
-}
-
 /// Path segment grammar: `[a-z0-9]([a-z0-9-])*`.
 fn is_valid_segment(s: &str) -> bool {
     let mut chars = s.chars();
@@ -237,30 +232,31 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parse_shared_canonical() {
-        let ns = Namespace::parse("shared-canonical/coding/decisions").unwrap();
-        assert_eq!(ns.root, NamespaceRoot::SharedCanonical);
+    fn parse_resources() {
+        let ns = Namespace::parse("resources/coding/decisions").unwrap();
+        assert_eq!(ns.root, NamespaceRoot::Resources);
         assert_eq!(ns.path, vec!["coding", "decisions"]);
-        assert_eq!(ns.to_string(), "shared-canonical/coding/decisions");
+        assert_eq!(ns.to_string(), "resources/coding/decisions");
     }
 
     #[test]
-    fn parse_consumer_private() {
-        let ns = Namespace::parse("izu-private/scratch").unwrap();
-        assert_eq!(ns.root, NamespaceRoot::ConsumerPrivate("izu".into()));
+    fn parse_agent_and_user() {
+        assert_eq!(Namespace::parse("agent/persona").unwrap().root, NamespaceRoot::Agent);
+        assert_eq!(Namespace::parse("user/preferences").unwrap().root, NamespaceRoot::User);
     }
 
     #[test]
     fn reject_bad_root_and_segment() {
-        assert!(Namespace::parse("resources/x").is_err()); // old vocabulary, superseded
-        assert!(Namespace::parse("shared-canonical/Bad_Seg").is_err()); // uppercase + underscore
-        assert!(Namespace::parse("shared-canonical/-leading").is_err()); // leading dash
-        assert!(Namespace::parse("shared-canonical").is_err()); // no segment
+        assert!(Namespace::parse("nope/x").is_err()); // not a valid root
+        assert!(Namespace::parse("shared-canonical/x").is_err()); // old root, superseded by G1
+        assert!(Namespace::parse("agent/Bad_Seg").is_err()); // uppercase + underscore
+        assert!(Namespace::parse("agent/-leading").is_err()); // leading dash
+        assert!(Namespace::parse("agent").is_err()); // no segment
     }
 
     #[test]
     fn uri_roundtrip() {
-        let s = "daimon://00000000-0000-0000-0000-000000000001/shared-canonical/coding/decision/00000000-0000-0000-0000-0000000000aa#L0";
+        let s = "daimon://00000000-0000-0000-0000-000000000001/resources/coding/decision/00000000-0000-0000-0000-0000000000aa#L0";
         let uri = MemoryUri::parse(s).unwrap();
         assert_eq!(uri.record_type, MemoryKind::Decision);
         assert_eq!(uri.tier, Tier::L0);
@@ -282,18 +278,18 @@ mod tests {
 
     #[test]
     fn display_relative_drops_tenant() {
-        let full = "daimon://00000000-0000-0000-0000-000000000001/shared-canonical/coding/decision/00000000-0000-0000-0000-0000000000aa#L0";
+        let full = "daimon://00000000-0000-0000-0000-000000000001/resources/coding/decision/00000000-0000-0000-0000-0000000000aa#L0";
         let uri = MemoryUri::parse(full).unwrap();
         assert_eq!(
             uri.display_relative(),
-            "daimon://shared-canonical/coding/decision/00000000-0000-0000-0000-0000000000aa#L0"
+            "daimon://resources/coding/decision/00000000-0000-0000-0000-0000000000aa#L0"
         );
     }
 
     #[test]
     fn parse_scoped_accepts_full() {
         let tenant = Uuid::parse_str("00000000-0000-0000-0000-000000000099").unwrap();
-        let full = "daimon://00000000-0000-0000-0000-000000000001/shared-canonical/coding/decision/00000000-0000-0000-0000-0000000000aa#L0";
+        let full = "daimon://00000000-0000-0000-0000-000000000001/resources/coding/decision/00000000-0000-0000-0000-0000000000aa#L0";
         let uri = MemoryUri::parse_scoped(full, tenant).unwrap();
         // Full URI keeps its own embedded tenant, NOT the default.
         assert_eq!(uri.tenant_id, Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap());
@@ -303,7 +299,7 @@ mod tests {
     #[test]
     fn parse_scoped_accepts_relative_and_uses_default_tenant() {
         let tenant = Uuid::parse_str("00000000-0000-0000-0000-000000000099").unwrap();
-        let rel = "daimon://shared-canonical/coding/decision/00000000-0000-0000-0000-0000000000aa#L0";
+        let rel = "daimon://resources/coding/decision/00000000-0000-0000-0000-0000000000aa#L0";
         let uri = MemoryUri::parse_scoped(rel, tenant).unwrap();
         assert_eq!(uri.tenant_id, tenant);
         assert_eq!(uri.record_type, MemoryKind::Decision);
@@ -322,10 +318,10 @@ mod tests {
 
     #[test]
     fn strip_tenant_segment_drops_first_segment() {
-        let full = "daimon://00000000-0000-0000-0000-000000000001/shared-canonical/coding/decision/00000000-0000-0000-0000-0000000000aa";
+        let full = "daimon://00000000-0000-0000-0000-000000000001/resources/coding/decision/00000000-0000-0000-0000-0000000000aa";
         assert_eq!(
             strip_tenant_segment(full),
-            "daimon://shared-canonical/coding/decision/00000000-0000-0000-0000-0000000000aa"
+            "daimon://resources/coding/decision/00000000-0000-0000-0000-0000000000aa"
         );
     }
 }

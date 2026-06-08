@@ -206,7 +206,7 @@ fn prompt_line(prompt: &str, default: &str) -> String {
 
 /// Interactive persona wizard (the ov-style management surface). Prompts for the AI's
 /// identity + the user's profile and writes ONE `persona` record to
-/// shared-canonical/system/persona via the REST API, the single sanctioned writer of the
+/// agent/persona via the REST API, the single sanctioned writer of the
 /// persona kind. Config: DAIMON_ENDPOINT (default http://127.0.0.1:8080), DAIMON_TENANT.
 async fn persona() -> Result<()> {
     let endpoint = std::env::var("DAIMON_ENDPOINT")
@@ -239,7 +239,7 @@ async fn persona() -> Result<()> {
     );
     let record = json!({
         "kind": "persona",
-        "namespace": "shared-canonical/system/persona",
+        "namespace": "agent/persona",
         "title": "Operator Persona",
         "body": body,
         "fields": { "identity": identity, "voice": voice_full, "boundaries": boundaries },
@@ -377,7 +377,7 @@ fn parse_protocol_md(md: &str) -> Result<ProtoRec> {
     let mut title = String::new();
     let mut scope = String::new();
     let mut rules = String::new();
-    let mut namespace = "shared-canonical/system/protocol".to_string();
+    let mut namespace = "agent/protocol".to_string();
     let trimmed = md.trim_start();
     let body;
     if let Some(rest) = trimmed.strip_prefix("---") {

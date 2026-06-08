@@ -1,6 +1,6 @@
 ---
 title: Behavioral Discipline
-namespace: shared-canonical/system/protocol
+namespace: agent/protocol
 scope: All agents (Claude Code, Codex, Hermes) under this tenant; governs how the agent works, not what it remembers.
 rules: recall-first; state assumptions; verify before done; smallest change; surface trade-offs; fail loudly learn once; respect security.
 ---
