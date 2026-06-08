@@ -6,7 +6,7 @@ resolver = "2"
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
-repository = "https://git.wakbijok.uk/daimon/daimon-memory"
+repository = "https://github.com/wakbijok/daimon-memory"
 
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }
