@@ -95,7 +95,7 @@ async fn reindex() -> Result<()> {
     let client = pool.get().await?;
     let rows = client
         .query(
-            "SELECT id, tenant_id, namespace, kind, title, abstract, body, uri_path
+            "SELECT id, tenant_id, namespace, kind, title, abstract, body, importance, uri_path
              FROM memory.records WHERE status='active'",
             &[],
         )
@@ -107,6 +107,7 @@ async fn reindex() -> Result<()> {
         let title: String = row.get("title");
         let abstract_: String = row.get("abstract");
         let body: String = row.get("body");
+        let importance: i16 = row.get("importance");
         // Embed title + body (capped; keep in sync with the indexer).
         let body_capped: String = body.chars().take(2000).collect();
         let mut vecs = embedder
@@ -119,6 +120,7 @@ async fn reindex() -> Result<()> {
             "kind": row.get::<_, String>("kind"),
             "title": title,
             "abstract": abstract_,
+            "importance": importance,
             "uri": row.get::<_, String>("uri_path"),
         });
         store.upsert(id, vector, payload).await.map_err(to_anyhow)?;

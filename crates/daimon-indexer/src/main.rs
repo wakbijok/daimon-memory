@@ -85,7 +85,7 @@ async fn drain_batch(pool: &Pool, store: &VectorStore, embedder: &Embedder) -> a
             "upsert" => {
                 if let Some(rec) = client
                     .query_opt(
-                        "SELECT namespace, kind, title, abstract, body, uri_path
+                        "SELECT namespace, kind, title, abstract, body, importance, uri_path
                          FROM memory.records WHERE id=$1 AND status='active'",
                         &[&record_id],
                     )
@@ -96,6 +96,7 @@ async fn drain_batch(pool: &Pool, store: &VectorStore, embedder: &Embedder) -> a
                     let title: String = rec.get("title");
                     let abstract_: String = rec.get("abstract");
                     let body: String = rec.get("body");
+                    let importance: i16 = rec.get("importance");
                     let uri: String = rec.get("uri_path");
                     // Embed title + body (capped; bge-small truncates ~512 tokens). Keep the
                     // cap in sync with the reindex CLI so live + reindexed vectors agree.
@@ -109,6 +110,7 @@ async fn drain_batch(pool: &Pool, store: &VectorStore, embedder: &Embedder) -> a
                         "kind": kind,
                         "title": title,
                         "abstract": abstract_,
+                        "importance": importance,
                         "uri": uri,
                     });
                     store.upsert(record_id, vector, payload).await.map_err(to_anyhow)?;

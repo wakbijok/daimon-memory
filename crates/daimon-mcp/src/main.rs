@@ -234,11 +234,16 @@ pub(crate) async fn hybrid_recall(
                                 .and_then(|v| v.as_str())
                                 .unwrap_or("")
                                 .to_string();
+                            let imp =
+                                p.get("importance").and_then(|v| v.as_u64()).unwrap_or(0) as u8;
                             let e = acc
                                 .entry(uri)
-                                .or_insert_with(|| (kind, title, abs, 0.0, vec![], 0u8, 0.0, 0.0));
+                                .or_insert_with(|| (kind, title, abs, 0.0, vec![], imp, 0.0, 0.0));
                             e.3 += 1.0 / (K + rank as f32 + 1.0);
                             e.4.push("semantic");
+                            if e.5 == 0 {
+                                e.5 = imp;
+                            }
                             e.7 = vh.score; // raw cosine
                         }
                     }
