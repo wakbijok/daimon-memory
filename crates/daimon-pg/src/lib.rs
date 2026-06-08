@@ -256,7 +256,7 @@ impl ContextMemory for PgStore {
 
         const FTS: &str = "to_tsvector('english', coalesce(title,'')||' '||coalesce(abstract,'')||' '||coalesce(body,''))";
         let sql = format!(
-            "SELECT uri_path, kind, title, abstract,
+            "SELECT uri_path, kind, title, abstract, importance,
                     CASE WHEN $2 = '' THEN 0::real
                          ELSE ts_rank({FTS}, plainto_tsquery('english', $2)) END AS score
              FROM memory.records
@@ -284,6 +284,7 @@ impl ContextMemory for PgStore {
                 title: row.get("title"),
                 abstract_: row.get("abstract"),
                 score: row.get::<_, f32>("score"),
+                importance: row.get::<_, i16>("importance") as u8,
             });
         }
         Ok(hits)

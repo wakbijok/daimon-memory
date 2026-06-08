@@ -181,8 +181,12 @@ pub(crate) async fn hybrid_recall(
 ) -> Vec<serde_json::Value> {
     use std::collections::HashMap;
     const K: f32 = 60.0;
-    // uri -> (kind, title, abstract, fused_score, sources)
-    let mut acc: HashMap<String, (String, String, String, f32, Vec<&'static str>)> = HashMap::new();
+    // Max additive importance boost: ~4 inter-rank RRF gaps at importance 100 (one gap with
+    // K=60 is ~0.000264). Advisory, never enough to overtake a both-arms-strong result.
+    const IMPORTANCE_BOOST_MAX: f32 = 0.001;
+    // uri -> (kind, title, abstract, fused_rrf, sources, importance, raw_keyword, raw_semantic)
+    let mut acc: HashMap<String, (String, String, String, f32, Vec<&'static str>, u8, f32, f32)> =
+        HashMap::new();
 
     // keyword (Postgres FTS)
     if let Ok(pg) = st.store.find(scope, query, filters).await {
@@ -194,10 +198,17 @@ pub(crate) async fn hybrid_recall(
                     h.abstract_.clone(),
                     0.0,
                     vec![],
+                    h.importance,
+                    0.0,
+                    0.0,
                 )
             });
             e.3 += 1.0 / (K + rank as f32 + 1.0);
             e.4.push("keyword");
+            if e.5 == 0 {
+                e.5 = h.importance;
+            }
+            e.6 = h.score; // raw ts_rank
         }
     }
 
@@ -223,9 +234,12 @@ pub(crate) async fn hybrid_recall(
                                 .and_then(|v| v.as_str())
                                 .unwrap_or("")
                                 .to_string();
-                            let e = acc.entry(uri).or_insert_with(|| (kind, title, abs, 0.0, vec![]));
+                            let e = acc
+                                .entry(uri)
+                                .or_insert_with(|| (kind, title, abs, 0.0, vec![], 0u8, 0.0, 0.0));
                             e.3 += 1.0 / (K + rank as f32 + 1.0);
                             e.4.push("semantic");
+                            e.7 = vh.score; // raw cosine
                         }
                     }
                 }
@@ -235,15 +249,26 @@ pub(crate) async fn hybrid_recall(
 
     let mut out: Vec<serde_json::Value> = acc
         .into_iter()
-        .map(|(uri, (kind, title, abs, score, srcs))| {
-            json!({"uri": uri, "kind": kind, "title": title, "abstract": abs, "score": score, "sources": srcs})
+        .map(|(uri, (kind, title, abs, score, srcs, importance, raw_kw, raw_sem))| {
+            let boosted = score + (importance as f32 / 100.0) * IMPORTANCE_BOOST_MAX;
+            json!({
+                "uri": uri, "kind": kind, "title": title, "abstract": abs,
+                "score": boosted,
+                "importance": importance,
+                "sources": srcs,
+                "scores": {"rrf": score, "raw_keyword": raw_kw, "raw_semantic": raw_sem}
+            })
         })
         .collect();
+    // Sort by boosted score; deterministic tie-break (importance, then uri) removes the
+    // HashMap-iteration non-determinism on equal scores.
     out.sort_by(|a, b| {
         b["score"]
             .as_f64()
             .partial_cmp(&a["score"].as_f64())
             .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| b["importance"].as_u64().cmp(&a["importance"].as_u64()))
+            .then_with(|| a["uri"].as_str().cmp(&b["uri"].as_str()))
     });
     out.truncate(filters.limit.max(1));
     out

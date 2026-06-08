@@ -70,6 +70,9 @@ pub struct MemoryHit {
     #[serde(rename = "abstract")]
     pub abstract_: String,
     pub score: f32,
+    /// Record importance (0-100); advisory rerank-boost band, exposed for fusion weighting.
+    #[serde(default)]
+    pub importance: u8,
 }
 
 /// Deterministic recall filters (SDS §4.4) - applied as DB predicates, no LLM.
