@@ -25,6 +25,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import threading
 from typing import Any, Dict, List, Optional
 
@@ -36,6 +37,21 @@ _DEFAULT_TENANT = "00000000-0000-0000-0000-0000000000d1"
 _DEFAULT_NAMESPACE = "hermes-private/notes"
 _RECALL_LIMIT = 6
 _HTTP_TIMEOUT = 6.0
+
+# --- save-nudge (deterministic, no model): signal class -> the tool the nudge names ---
+_NUDGE_SAVE_TOOLS = {"daimon_remember"}
+_NUDGE_SIGNALS = [
+    ("decision", "daimon_remember (kind=decision)",
+     re.compile(r"\b(we (decided|chose|went with|settled on)|let'?s go with|i'?ll use|decision:|instead of .+ we|rather than|trade-?off)\b", re.I)),
+    ("incident/failure", "daimon_remember (kind=incident_summary)",
+     re.compile(r"\b(failed|broke|broken|regression|reverted|rolled back|crashed|outage|data ?loss|did ?n.?t work|that was wrong|root cause|\bbug\b)\b", re.I)),
+    ("lesson/correction", "daimon_remember (kind=agent_lesson)",
+     re.compile(r"\b(lesson|learned|next time|turns out|gotcha|note to self|don'?t forget|the trick is|actually,? it'?s)\b", re.I)),
+    ("follow-up", "daimon_remember (kind=reminder)",
+     re.compile(r"\b(remind me|follow ?up|next session|by (mon|tue|wed|thu|fri|eod|end of)|deadline|\bdue\b|\btodo\b|don'?t forget to)\b", re.I)),
+    ("convention/runbook", "daimon_remember (kind=runbook or project_convention)",
+     re.compile(r"\b(from now on|going forward|the procedure is|the steps? (to|are)|convention|the standard is|always do this)\b", re.I)),
+]
 
 
 def _get_httpx():
@@ -216,6 +232,13 @@ class DaimonMemoryProvider(MemoryProvider):
         self._namespace = _DEFAULT_NAMESPACE
         self._session_id = ""
         self._system_block = ""
+        # save-nudge state (in-process; the provider lives for the whole session, no file)
+        self._nudge_on = True
+        self._nudge_cadence = 5
+        self._nudge_turn = 0
+        self._nudge_quiet = 0
+        self._nudge_saved = False
+        self._nudge_pending = ""
         # background recall plumbing
         self._prefetch_lock = threading.Lock()
         self._prefetch_result = ""
@@ -248,6 +271,12 @@ class DaimonMemoryProvider(MemoryProvider):
             logger.warning("daimon: backend at %s not reachable yet (recall/capture best-effort)", self._endpoint)
         # Load the canonical persona + operating protocols ONCE for this session.
         self._system_block = self._load_system_block()
+        # Save-nudge config (env; default cadence 5; DAIMON_NUDGE=off disables).
+        self._nudge_on = os.environ.get("DAIMON_NUDGE", "on").lower() != "off"
+        try:
+            self._nudge_cadence = int(os.environ.get("DAIMON_NUDGE_CADENCE", "5") or "5")
+        except ValueError:
+            self._nudge_cadence = 5
 
     def system_prompt_block(self) -> str:
         if not self._client:
@@ -294,6 +323,10 @@ class DaimonMemoryProvider(MemoryProvider):
         with self._prefetch_lock:
             result = self._prefetch_result
             self._prefetch_result = ""
+        # Piggyback any pending save-nudge onto the recall injection (one-turn lag).
+        if self._nudge_pending:
+            result = (result + "\n\n" + self._nudge_pending) if result else self._nudge_pending
+            self._nudge_pending = ""
         return result
 
     def queue_prefetch(self, query: str, *, session_id: str = "") -> None:
@@ -327,11 +360,33 @@ class DaimonMemoryProvider(MemoryProvider):
     # -- capture: CURATED only, never raw turns ------------------------------
 
     def sync_turn(self, user_content, assistant_content, *, session_id="", messages=None) -> None:
-        # Intentional no-op: daimon-memory does NOT ingest raw conversation turns.
-        # Capture is curated - via on_memory_write (mirroring Hermes's own memory
-        # writes) and the explicit daimon_remember tool. This keeps our LLM
-        # requirement at zero (no extraction VLM on the daimon side).
-        return
+        # Capture stays a no-op: daimon-memory does NOT ingest raw conversation turns (curated
+        # capture only, via on_memory_write + the daimon_remember tool). We ADD a read-only
+        # save-NUDGE: scan the assistant turn for an uncaptured save-signal (or a quiet stretch)
+        # and stash a reminder that rides along with the next prefetch. No write, no model -
+        # timing only (the Save Discipline's "hooks back-stop you").
+        if not self._nudge_on:
+            return
+        self._nudge_turn += 1
+        if self._nudge_saved:                 # a daimon_remember fired this turn -> covered
+            self._nudge_saved = False
+            self._nudge_quiet = 0
+            return
+        text = assistant_content if isinstance(assistant_content, str) else str(assistant_content or "")
+        for cls, tool, rx in _NUDGE_SIGNALS:
+            if rx.search(text):
+                self._nudge_pending = (
+                    f"[daimon save-nudge] That looks like a {cls} that was not captured. "
+                    f"If durable, save it with {tool} (Memory Save Discipline: one event, one record)."
+                )
+                return
+        self._nudge_quiet += 1
+        if self._nudge_cadence > 0 and self._nudge_quiet >= self._nudge_cadence:
+            self._nudge_quiet = 0
+            self._nudge_pending = (
+                f"[daimon save-nudge] {self._nudge_cadence} turns since your last save. If "
+                f"anything since is worth keeping, persist it with daimon_remember now."
+            )
 
     def on_memory_write(self, action, target, content, metadata=None) -> None:
         """Mirror Hermes's built-in curated memory writes into daimon-memory."""
@@ -377,6 +432,7 @@ class DaimonMemoryProvider(MemoryProvider):
         if not self._client:
             return json.dumps({"error": "daimon endpoint not configured"})
         if tool_name == "daimon_remember":
+            self._nudge_saved = True  # reset the nudge counter: the agent saved this turn
             payload = {
                 "kind": args.get("kind", ""),
                 "namespace": args.get("namespace") or self._namespace,
@@ -399,8 +455,24 @@ class DaimonMemoryProvider(MemoryProvider):
     # -- session lifecycle ---------------------------------------------------
 
     def on_session_end(self, messages: List[Dict[str, Any]]) -> None:
-        # No extraction pipeline; just drain pending writes.
+        # Drain pending writes (no extraction pipeline), then the save-nudge session-end sweep:
+        # log any save-worthy signals that were never captured (best-effort backstop).
         self._drain_writes(timeout=5.0)
+        if not self._nudge_on or not messages:
+            return
+        found = set()
+        for m in messages:
+            if not isinstance(m, dict) or m.get("role") != "assistant":
+                continue
+            text = m.get("content")
+            if not isinstance(text, str):
+                text = str(text or "")
+            for cls, _tool, rx in _NUDGE_SIGNALS:
+                if rx.search(text):
+                    found.add(cls)
+                    break
+        if found:
+            logger.info("daimon: uncaptured at session end -> %s", ", ".join(sorted(found)))
 
     def _drain_writes(self, timeout: float) -> None:
         for t in list(self._write_threads):
