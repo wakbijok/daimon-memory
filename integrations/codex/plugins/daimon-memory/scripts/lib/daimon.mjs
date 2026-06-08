@@ -101,3 +101,23 @@ export function injectAndExit(eventName, text) {
   }
   process.exit(0);
 }
+
+// POST /v1/memory (curated capture). Returns true on store or validation-skip (400), false on
+// network failure. Best-effort: never throws. Used by mirror-memory.mjs.
+export async function store(payload) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 6000);
+  try {
+    const r = await fetch(`${ENDPOINT}/v1/memory`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-daimon-tenant": TENANT },
+      body: JSON.stringify(payload),
+      signal: ctrl.signal,
+    });
+    return r.ok || r.status === 400;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
