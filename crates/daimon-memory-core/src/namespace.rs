@@ -4,7 +4,7 @@ use std::fmt;
 use std::str::FromStr;
 use uuid::Uuid;
 
-/// Namespace root (SDS A.2). Reserved roots plus `<consumer>-private`.
+/// Namespace root. Reserved roots plus `<consumer>-private`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NamespaceRoot {
     /// `shared-canonical/` - the shared team brain (control-gated writes).
@@ -42,7 +42,7 @@ impl fmt::Display for NamespaceRoot {
     }
 }
 
-/// A validated namespace: `root "/" segment ( "/" segment )*` (SDS A.2).
+/// A validated namespace: `root "/" segment ( "/" segment )*`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Namespace {
     pub root: NamespaceRoot,
@@ -89,7 +89,7 @@ impl FromStr for Namespace {
     }
 }
 
-/// Recall granularity tier (SDS A.3 / §3.3). Recall ranks on L0.
+/// Recall granularity tier. Recall ranks on L0.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tier {
     L0,
@@ -115,7 +115,7 @@ impl Tier {
     }
 }
 
-/// A `daimon://{tenant}/{namespace}/{record_type}/{record_id}[#tier]` address (SDS A.3).
+/// A `daimon://{tenant}/{namespace}/{record_type}/{record_id}[#tier]` address.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MemoryUri {
     pub tenant_id: Uuid,
@@ -222,7 +222,7 @@ fn is_consumer(s: &str) -> bool {
     is_valid_segment(s)
 }
 
-/// Path segment grammar: `[a-z0-9]([a-z0-9-])*` (SDS A.2).
+/// Path segment grammar: `[a-z0-9]([a-z0-9-])*`.
 fn is_valid_segment(s: &str) -> bool {
     let mut chars = s.chars();
     match chars.next() {

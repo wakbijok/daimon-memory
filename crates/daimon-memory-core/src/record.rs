@@ -8,7 +8,7 @@ fn default_confidence() -> f32 {
     1.0
 }
 
-/// A write request from a consumer (SDS §4.1 `MemoryWrite`).
+/// A write request from a consumer.
 ///
 /// The AI proposes `kind`, `title`, `body`, structured `fields`, and a target
 /// `namespace`; the control layer ([`crate::validate_write`]) disposes everything
@@ -16,7 +16,7 @@ fn default_confidence() -> f32 {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryWrite {
     pub kind: MemoryKind,
-    /// Target namespace string, validated against the grammar (SDS A.2).
+    /// Target namespace string, validated against the grammar.
     pub namespace: String,
     pub title: String,
     pub body: String,
@@ -28,15 +28,15 @@ pub struct MemoryWrite {
     pub source_refs: Vec<String>,
     #[serde(default)]
     pub tags: Vec<String>,
-    /// Advisory rerank-boost band, 0..=100 (SDS A.5).
+    /// Advisory rerank-boost band, 0..=100.
     #[serde(default)]
     pub importance: u8,
-    /// Guard-sensitive confidence 0.0..=1.0 (proposal §10.5).
+    /// Guard-sensitive confidence 0.0..=1.0.
     #[serde(default = "default_confidence")]
     pub confidence: f32,
 }
 
-/// A stored record returned by `read` (SDS §3.2 canonical row).
+/// A stored record returned by `read`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryRecord {
     pub id: Uuid,
@@ -59,7 +59,7 @@ pub struct MemoryRecord {
     pub uri: String,
 }
 
-/// A ranked recall result (SDS §4.4). Carries the L0 abstract + URI; full content
+/// A ranked recall result. Carries the L0 abstract + URI; full content
 /// is a lazy `read(uri)`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryHit {
@@ -75,7 +75,7 @@ pub struct MemoryHit {
     pub importance: u8,
 }
 
-/// Deterministic recall filters (SDS §4.4) - applied as DB predicates, no LLM.
+/// Deterministic recall filters - applied as DB predicates, no LLM.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RecallFilters {
     #[serde(default)]

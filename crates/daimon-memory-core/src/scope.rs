@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-/// The addressing tuple carried on every read/write (SDS v0.2 §4.1).
+/// The addressing tuple carried on every read/write.
 ///
 /// `tenant_id` is the hard isolation boundary (Postgres RLS); the optional fields
 /// scope a record within the tenant and map onto namespace path segments.

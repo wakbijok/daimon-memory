@@ -1,4 +1,4 @@
-//! daimon-indexer - the singleton outbox drainer (SDS v0.2 §8.7).
+//! daimon-indexer - the singleton outbox drainer.
 //!
 //! Drains `memory.index_outbox` (written transactionally by the store) → embeds the
 //! record's L0 abstract → upserts/deletes the Qdrant point → marks the row processed.

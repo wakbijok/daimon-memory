@@ -3,12 +3,12 @@ use crate::namespace::Namespace;
 use crate::record::MemoryWrite;
 use serde_json::Value;
 
-/// The control-layer write contract (SDS v0.2 §4.5) - **deterministic, no LLM**.
+/// The control-layer write contract - **deterministic, no LLM**.
 ///
 /// Enforces (all in code, never by model judgment):
-/// 1. the namespace grammar (SDS A.2),
+/// 1. the namespace grammar,
 /// 2. the universal `title` + `body` are non-empty,
-/// 3. every kind-specific required field is present and non-empty (SDS A.1),
+/// 3. every kind-specific required field is present and non-empty,
 /// 4. `importance` ∈ 0..=100 and `confidence` ∈ 0.0..=1.0.
 ///
 /// Returns `Ok(())` or a [`MemoryError::Validation`] / `InvalidNamespace`.

@@ -1,7 +1,7 @@
 //! Embedding + Qdrant vector store for daimon-memory semantic recall.
 //!
 //! - [`Embedder`]: in-process fastembed **bge-small-en-v1.5** (384-d, CPU) - no external
-//!   service, no big model (SDS v0.2 Principle 1). `embed` needs `&mut`, so the model is
+//!   service, no big model. `embed` needs `&mut`, so the model is
 //!   held behind a `Mutex`.
 //! - [`VectorStore`]: one Qdrant collection (`daimon_memory`) with `tenant_id` in the
 //!   payload; search is tenant-filtered. Point id = the record UUID (idempotent upsert).

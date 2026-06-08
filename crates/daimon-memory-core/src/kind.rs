@@ -2,7 +2,7 @@ use crate::error::{MemoryError, Result};
 use serde::{Deserialize, Serialize};
 
 /// Whether a record type appends a new immutable entry or updates current state.
-/// Control-layer dispatch (SDS A.1) - never caller-selectable.
+/// Control-layer dispatch - never caller-selectable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WriteMode {
@@ -12,7 +12,7 @@ pub enum WriteMode {
     Update,
 }
 
-/// The canonical typed-record taxonomy (SDS A.1; anchor proposal §9 `MemoryKind`).
+/// The canonical typed-record taxonomy.
 ///
 /// The set is closed in code so the control layer can validate required fields and
 /// pick the write-mode deterministically. Custom consumer types are handled by the
@@ -79,7 +79,7 @@ impl MemoryKind {
             .ok_or_else(|| MemoryError::UnknownKind(s.to_string()))
     }
 
-    /// Write-mode per kind (SDS A.1). Append = immutable log; Update = current-state.
+    /// Write-mode per kind. Append = immutable log; Update = current-state.
     pub fn write_mode(&self) -> WriteMode {
         match self {
             MemoryKind::Decision

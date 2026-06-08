@@ -1,7 +1,7 @@
 //! `daimon-memory-core` - the deterministic, LLM-free core of **daimon-memory**.
 //!
-//! This crate holds everything that must be *enforced by code, not LLM discretion*
-//! (SDS v0.2 Principle 2): the typed taxonomy ([`MemoryKind`]), the namespace and
+//! This crate holds everything that must be *enforced by code, not LLM discretion*:
+//! the typed taxonomy ([`MemoryKind`]), the namespace and
 //! URI grammar ([`Namespace`], [`MemoryUri`]), the control-layer write validation
 //! ([`validate_write`]), and the [`ContextMemory`] trait every backend implements.
 //!

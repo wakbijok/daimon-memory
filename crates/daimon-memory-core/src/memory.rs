@@ -4,7 +4,7 @@ use crate::record::{MemoryHit, MemoryRecord, MemoryWrite, RecallFilters};
 use crate::scope::ContextScope;
 use async_trait::async_trait;
 
-/// The backend-agnostic memory contract (anchor proposal §9; SDS §4.1).
+/// The backend-agnostic memory contract.
 ///
 /// Implementations (Postgres + Qdrant in sibling crates) MUST keep these invariants:
 /// - `find` is **deterministic and LLM-free** (embedding + keyword + filters);

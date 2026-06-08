@@ -636,6 +636,7 @@ dependencies = [
  "daimon-vec",
  "deadpool-postgres",
  "refinery",
+ "reqwest",
  "serde_json",
  "tokio",
  "tokio-postgres",

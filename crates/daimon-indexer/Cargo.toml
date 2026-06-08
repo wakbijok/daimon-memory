@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Singleton outbox drainer: PG memory.index_outbox -> embed -> Qdrant upsert/delete (SDS v0.2 indexer)."
+description = "Singleton outbox drainer: PG memory.index_outbox -> embed -> Qdrant upsert/delete."
 
 [[bin]]
 name = "daimon-indexer"

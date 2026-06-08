@@ -4,7 +4,7 @@
 //! validated `store`, deterministic full-text `recall`, and `read`. Tenant is taken
 //! from the `X-Daimon-Tenant` header (default for the MVP); bearer-auth → tenant and
 //! the streamable-HTTP `/mcp` JSON-RPC surface are the next slices. Qdrant vector
-//! hybrid follows the keyword-recall MVP. No local state → HPA-scalable (SDS v0.2 §8.7).
+//! hybrid follows the keyword-recall MVP. No local state → HPA-scalable.
 
 use axum::{
     Json, Router,
@@ -30,7 +30,7 @@ mod mcp;
 #[derive(Clone)]
 pub(crate) struct AppState {
     pub(crate) store: Arc<PgStore>,
-    /// Optional semantic tier - recall degrades to PG-only if absent (SDS: recall never hard-fails).
+    /// Optional semantic tier - recall degrades to PG-only if absent (recall never hard-fails).
     pub(crate) embedder: Option<Arc<daimon_vec::Embedder>>,
     pub(crate) vector: Option<Arc<daimon_vec::VectorStore>>,
     pub(crate) default_tenant: Uuid,
@@ -173,7 +173,7 @@ async fn recall_h(
 }
 
 /// Hybrid recall: RRF fusion of keyword (Postgres FTS) + semantic (Qdrant dense).
-/// Degrades to whichever tier is available; never hard-fails (SDS recall guarantee).
+/// Degrades to whichever tier is available; never hard-fails.
 pub(crate) async fn hybrid_recall(
     st: &AppState,
     scope: &ContextScope,

@@ -9,10 +9,10 @@ pub enum MemoryError {
     /// A record or path was not found.
     #[error("not found: {0}")]
     NotFound(String),
-    /// Namespace string violated the grammar (SDS A.2).
+    /// Namespace string violated the grammar.
     #[error("invalid namespace: {0}")]
     InvalidNamespace(String),
-    /// `daimon://` URI violated the grammar (SDS A.3).
+    /// `daimon://` URI violated the grammar.
     #[error("invalid uri: {0}")]
     InvalidUri(String),
     /// Unknown / unregistered memory kind.
