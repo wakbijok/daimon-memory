@@ -226,6 +226,17 @@ pub(crate) async fn hybrid_recall(
                             if uri.is_empty() {
                                 continue;
                             }
+                            // Qdrant only filters by tenant_id (see daimon-vec::search), so the
+                            // namespace_prefix scope must be enforced here to match the keyword arm
+                            // (daimon-pg: `namespace LIKE $prefix%`). Prefix match on the payload's
+                            // namespace field; skip cross-namespace semantic leaks.
+                            if let Some(prefix) = filters.namespace_prefix.as_deref() {
+                                let ns =
+                                    p.get("namespace").and_then(|v| v.as_str()).unwrap_or("");
+                                if !ns.starts_with(prefix) {
+                                    continue;
+                                }
+                            }
                             let kind =
                                 p.get("kind").and_then(|v| v.as_str()).unwrap_or("").to_string();
                             let title =
