@@ -64,7 +64,7 @@ fn tool_definitions() -> Value {
             },
             {
                 "name": "recall",
-                "description": "Deterministic recall (full-text + filters, no LLM). Returns ranked hits with abstract + uri.",
+                "description": "Deterministic hybrid recall (full-text + semantic vectors, RRF-fused, no LLM). Returns ranked hits with scores, abstract + uri.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -248,15 +248,17 @@ async fn call_tool(st: &AppState, headers: &HeaderMap, id: &Value, params: &Valu
                 since: None,
                 limit: args.get("limit").and_then(|l| l.as_u64()).unwrap_or(10) as usize,
             };
-            match st.store.find(&scope, &query, &filters).await {
-                Ok(mut hits) => {
-                    for h in &mut hits {
-                        h.uri = strip_tenant_segment(&h.uri);
+            // Hybrid (keyword + semantic RRF) - the SAME path as /v1/recall, so the explicit
+            // recall tool consults embeddings, not Postgres FTS alone. (Was st.store.find.)
+            let mut hits = crate::hybrid_recall(st, &scope, &query, &filters).await;
+            for h in &mut hits {
+                if let Some(rel) = h.get("uri").and_then(|v| v.as_str()).map(strip_tenant_segment) {
+                    if let Some(o) = h.as_object_mut() {
+                        o.insert("uri".to_string(), Value::String(rel));
                     }
-                    ok(id, tool_text(serde_json::to_string_pretty(&hits).unwrap_or_default()))
                 }
-                Err(e) => ok(id, tool_err(format!("{e}"))),
             }
+            ok(id, tool_text(serde_json::to_string_pretty(&hits).unwrap_or_default()))
         }
         "read" => {
             let uri = args.get("uri").and_then(|u| u.as_str()).unwrap_or("");
