@@ -28,6 +28,10 @@ spec:
       restartPolicy: Never
       nodeSelector:
         kubernetes.io/hostname: celebrimbor
+      # celebrimbor carries ai-workload=true:NoSchedule; the daimon pods tolerate it,
+      # so the build must too or it sits Pending (nodeSelector matches but taint blocks).
+      tolerations:
+      - { key: "ai-workload", operator: "Equal", value: "true", effect: "NoSchedule" }
       volumes:
       - name: docker-config
         secret:
