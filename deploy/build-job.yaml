@@ -1,0 +1,57 @@
+# In-cluster kaniko build for daimon-mcp:latest. No CI runner / local Docker needed.
+#
+# Usage (generateName, so use create not apply; each run gets a unique name):
+#   kubectl -n ai-workloads create -f deploy/build-job.yaml
+#   kubectl -n ai-workloads logs -f job/<generated-name>
+# Then, ArgoCD-safe rollout of the new :latest (set image gets reverted by ArgoCD):
+#   kubectl -n ai-workloads rollout restart deploy/daimon-mcp
+#
+# Pinned to celebrimbor: 12-core bare-metal vs the 4-core VMs (~3x faster compile).
+# Pair with the cargo-chef Dockerfile + --cache here so unchanged deps are a cache HIT
+# (~2-3 min incremental builds). The FIRST build (or any deps change) is a full cook
+# (~8-12 min on 12 cores) and is memory-heavy: free the ollama-0 pod (~18Gi) first, or
+# the cook may contend for celebrimbor RAM. Cached/incremental builds are light and fit
+# regardless.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  generateName: daimon-mcp-build-
+  namespace: ai-workloads
+  labels: { app: daimon-mcp-build }
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels: { app: daimon-mcp-build }
+    spec:
+      restartPolicy: Never
+      nodeSelector:
+        kubernetes.io/hostname: celebrimbor
+      volumes:
+      - name: docker-config
+        secret:
+          secretName: glcr-pull
+          items:
+          - { key: .dockerconfigjson, path: config.json }
+      containers:
+      - name: kaniko
+        image: gcr.io/kaniko-project/executor:latest
+        args:
+        - --context=git://git.wakbijok.uk/daimon/daimon-memory.git#refs/heads/main
+        - --dockerfile=Dockerfile
+        - --destination=glcr.wakbijok.uk/daimon/daimon-memory/daimon-mcp:latest
+        - --cache=true
+        - --cache-repo=glcr.wakbijok.uk/daimon/daimon-memory/cache
+        - --verbosity=info
+        env:
+        - name: GIT_USERNAME
+          value: oauth2
+        - name: GIT_PASSWORD
+          valueFrom:
+            secretKeyRef: { name: daimon-build-git, key: token }
+        resources:
+          requests: { cpu: "4", memory: "6Gi" }
+          limits: { cpu: "8", memory: "10Gi" }
+        volumeMounts:
+        - { name: docker-config, mountPath: /kaniko/.docker }
