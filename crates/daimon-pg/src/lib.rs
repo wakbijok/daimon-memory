@@ -83,8 +83,10 @@ impl PgStore {
         let client = self.pool.get().await.ok()?;
         let row = client
             .query_one(
+                // extract(epoch ...) returns `numeric` in PG 14+, which tokio-postgres cannot
+                // deserialize into f64 - cast to float8 explicitly or row.get panics.
                 "SELECT count(*)::bigint AS pending,
-                        extract(epoch FROM now() - min(created_at)) AS oldest_age_secs
+                        extract(epoch FROM now() - min(created_at))::float8 AS oldest_age_secs
                  FROM memory.index_outbox WHERE processed_at IS NULL",
                 &[],
             )
