@@ -11,3 +11,4 @@
 # Python bytecode (integrations/hermes)
 __pycache__/
 *.pyc
+.superpowers/
