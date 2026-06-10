@@ -34,13 +34,23 @@ ask(){ local v="$1" p="$2" d="${3:-}" cur ans=""; eval "cur=\${$v}"; [ -n "$cur"
   if is_tty && [ "$ASSUME_YES" != 1 ]; then read -r -p "  $p [$d]: " ans || true; fi
   printf -v "$v" '%s' "${ans:-$d}"; }
 
+# Portable Python runner: Git Bash on Windows ships no `python3` on PATH, but the `py`
+# launcher is standard there. An alias would not expand in a non-interactive script, so
+# wrap the dispatch in a function instead.
+have_python(){ command -v python3 >/dev/null 2>&1 || command -v py >/dev/null 2>&1; }
+pyrun(){
+  if command -v python3 >/dev/null 2>&1; then python3 "$@"
+  elif command -v py >/dev/null 2>&1; then py -3 "$@"
+  else return 127; fi
+}
+
 # Idempotently enable Codex native memory ([features] memories = true) without clobbering the
 # existing [features] table. Handles all four states (already-on / present-but-false / table
-# exists / table missing). Uses python3 for a safe targeted edit; no-op if python3 is absent.
+# exists / table missing). Uses Python for a safe targeted edit; no-op if Python is absent.
 enable_native_memory(){
   local cfg="$CODEX_HOME/config.toml"
-  command -v python3 >/dev/null 2>&1 || { echo "  (python3 not found; enable manually: Codex Settings -> Memory)"; return 1; }
-  python3 - "$cfg" <<'PY'
+  have_python || { echo "  (python3 not found; enable manually: Codex Settings -> Memory)"; return 1; }
+  pyrun - "$cfg" <<'PY'
 import sys, os, re
 p = sys.argv[1]
 s = open(p).read() if os.path.exists(p) else ""
@@ -86,16 +96,36 @@ rm -rf "$STABLE"; mkdir -p "$STABLE"
 cp -R "$SELF_DIR/.claude-plugin" "$SELF_DIR/plugins" "$STABLE/"
 PLUGIN_DIR="$STABLE/plugins/daimon-memory"
 
-# Substitute placeholders (Codex doesn't inject CODEX_PLUGIN_ROOT into hooks).
-sed -i.bak "s|__DAIMON_PLUGIN_ROOT__|$PLUGIN_DIR|g" "$PLUGIN_DIR/hooks/hooks.json"; rm -f "$PLUGIN_DIR/hooks/hooks.json.bak"
-sed -i.bak "s|__DAIMON_MCP_URL__|$ENDPOINT/mcp|g" "$PLUGIN_DIR/.mcp.json"; rm -f "$PLUGIN_DIR/.mcp.json.bak"
-sed -i.bak "s|__DAIMON_API_KEY__|$API_KEY|g" "$PLUGIN_DIR/.mcp.json"; rm -f "$PLUGIN_DIR/.mcp.json.bak"
+# Substitute placeholders (Codex doesn't inject CODEX_PLUGIN_ROOT into hooks). Python is
+# preferred: MSYS sed (Git Bash for Windows) handles -i.bak differently from GNU/BSD sed
+# and can mangle Windows paths; sed remains the fallback for minimal POSIX hosts.
+if have_python; then
+  pyrun - "$PLUGIN_DIR" "$ENDPOINT" "$API_KEY" <<'PY'
+import sys, pathlib
+plugin_dir, endpoint, api_key = sys.argv[1], sys.argv[2], sys.argv[3]
+substitutions = [
+    ("hooks/hooks.json", [("__DAIMON_PLUGIN_ROOT__", plugin_dir)]),
+    (".mcp.json",        [("__DAIMON_MCP_URL__", endpoint + "/mcp"),
+                          ("__DAIMON_API_KEY__", api_key)]),
+]
+for rel, pairs in substitutions:
+    p = pathlib.Path(plugin_dir) / rel
+    text = p.read_text(encoding="utf-8")
+    for placeholder, value in pairs:
+        text = text.replace(placeholder, value)
+    p.write_text(text, encoding="utf-8")
+PY
+else
+  sed -i.bak "s|__DAIMON_PLUGIN_ROOT__|$PLUGIN_DIR|g" "$PLUGIN_DIR/hooks/hooks.json"; rm -f "$PLUGIN_DIR/hooks/hooks.json.bak"
+  sed -i.bak "s|__DAIMON_MCP_URL__|$ENDPOINT/mcp|g" "$PLUGIN_DIR/.mcp.json"; rm -f "$PLUGIN_DIR/.mcp.json.bak"
+  sed -i.bak "s|__DAIMON_API_KEY__|$API_KEY|g" "$PLUGIN_DIR/.mcp.json"; rm -f "$PLUGIN_DIR/.mcp.json.bak"
+fi
 
 # Config the hooks read (Codex hook subprocesses don't get env reliably). lib/daimon.mjs
 # loads this file as the fallback between env and the dev defaults. Prefer python3 so a key
 # containing JSON-special characters can't silently produce a malformed (= ignored) config.
-if command -v python3 >/dev/null 2>&1; then
-  ENDPOINT="$ENDPOINT" TENANT="$TENANT" API_KEY="$API_KEY" CFG="$PLUGIN_DIR/scripts/lib/daimon.config.json" python3 - <<'PY'
+if have_python; then
+  ENDPOINT="$ENDPOINT" TENANT="$TENANT" API_KEY="$API_KEY" CFG="$PLUGIN_DIR/scripts/lib/daimon.config.json" pyrun - <<'PY'
 import json, os
 json.dump({"endpoint": os.environ["ENDPOINT"], "tenant": os.environ["TENANT"],
            "apiKey": os.environ["API_KEY"]}, open(os.environ["CFG"], "w"))

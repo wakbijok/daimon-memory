@@ -6,11 +6,12 @@
 // within one session).
 import { readFileSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
+import { stateBase } from "./lib/state-paths.mjs";
 
 function statePath(sessionId) {
   const safe = String(sessionId || "default").replace(/[^a-zA-Z0-9_-]/g, "_");
-  const base = process.env.XDG_STATE_HOME || join(homedir(), ".local", "state");
+  const base = stateBase();
   try {
     const dir = join(base, "daimon-memory", "precompact");
     mkdirSync(dir, { recursive: true });
