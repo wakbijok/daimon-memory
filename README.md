@@ -266,7 +266,8 @@ Client save-nudge (per tool):
 ## Deployment
 
 - **Docker / Compose.** The included `Dockerfile` builds the binaries; `docker-compose.yml` runs the full stack.
-- **Kubernetes.** daimon-mcp is a stateless `Deployment` (with an HPA); PostgreSQL and Qdrant are `StatefulSet`s. The embedder needs **AVX2**; schedule daimon-mcp + daimon-indexer onto an AVX2 node. Build the image (for example with kaniko) and apply your manifests, or sync via GitOps.
+- **Kubernetes.** daimon-mcp is a stateless `Deployment` (with an HPA); PostgreSQL and Qdrant are `StatefulSet`s. The embedder needs **AVX2** on x86_64; schedule daimon-mcp + daimon-indexer onto an AVX2 node. Build the image (for example with kaniko) and apply your manifests, or sync via GitOps.
+- **AVX2 and recall tiers.** Without AVX2 the stack still runs, but recall degrades to keyword-only: the embedder refuses to load (clear warning, no crash), the indexer parks instead of restart-looping, and both `/readyz` and `daimon health` report `recall_tier` (`hybrid | keyword | unhealthy`). `install.sh` preflights AVX2 after bringing the stack up. To backfill semantic recall after moving to a capable host, run `daimon reindex`.
 
 ## Backup and restore
 

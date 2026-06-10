@@ -164,9 +164,18 @@ async fn health() -> Result<()> {
         Ok(vs) => vs.ensure().await.is_ok(),
         Err(_) => false,
     };
+    // Mirrors /readyz: keyword recall needs Postgres only; hybrid additionally needs
+    // Qdrant plus a CPU the embedder can run on (AVX2 on x86_64).
+    let recall_tier = if !pg_ok {
+        "unhealthy"
+    } else if qd_ok && daimon_vec::embedder_supported() {
+        "hybrid"
+    } else {
+        "keyword"
+    };
     println!(
         "{}",
-        json!({"postgres": pg_ok, "qdrant": qd_ok, "healthy": pg_ok && qd_ok})
+        json!({"postgres": pg_ok, "qdrant": qd_ok, "recall_tier": recall_tier, "healthy": pg_ok && qd_ok})
     );
     if pg_ok && qd_ok {
         Ok(())

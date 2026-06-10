@@ -52,15 +52,28 @@ async fn main() -> anyhow::Result<()> {
         std::env::var("DAIMON_QDRANT_URL").unwrap_or_else(|_| "http://127.0.0.1:6334".to_string());
     let store = VectorStore::connect(&qdrant_url).map_err(to_anyhow)?;
     store.ensure().await.map_err(to_anyhow)?;
-    tracing::info!("indexer: loading embedder (bge-small, first run downloads the model)…");
-    let embedder = Embedder::new().map_err(to_anyhow)?;
-    tracing::info!(%qdrant_url, "indexer: ready");
-
     // Graceful shutdown: flips on SIGTERM/Ctrl-C. Each batch is already crash-safe (Qdrant
     // upsert before the processed_at mark, idempotent by record id), so we just stop cleanly
     // between batches rather than getting SIGKILLed mid-sleep.
     let shutdown = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     spawn_signal_watcher(shutdown.clone());
+
+    tracing::info!("indexer: loading embedder (bge-small, first run downloads the model)…");
+    let embedder = match Embedder::new() {
+        Ok(e) => e,
+        Err(e) if !once => {
+            // Degrade, don't crash: exiting here puts compose/k8s into a restart loop. The
+            // server still serves keyword-only recall (recall_tier=keyword on /readyz); the
+            // outbox accumulates and is drained by `daimon reindex` once on capable hardware.
+            tracing::warn!(%e, "indexer: embedder unavailable; semantic indexing disabled, parking (recall stays keyword-only)");
+            while !shutdown.load(std::sync::atomic::Ordering::Relaxed) {
+                sleep_or_shutdown(Duration::from_secs(3600), &shutdown).await;
+            }
+            return Ok(());
+        }
+        Err(e) => return Err(to_anyhow(e)),
+    };
+    tracing::info!(%qdrant_url, "indexer: ready");
 
     loop {
         if shutdown.load(std::sync::atomic::Ordering::Relaxed) {
