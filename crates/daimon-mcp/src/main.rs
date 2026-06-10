@@ -8,9 +8,10 @@
 
 use axum::{
     Json, Router,
-    extract::{Query, State},
-    http::{HeaderMap, StatusCode},
-    response::IntoResponse,
+    extract::{Query, Request, State},
+    http::{HeaderMap, StatusCode, header},
+    middleware::{self, Next},
+    response::{IntoResponse, Response},
     routing::{get, post},
 };
 use daimon_memory_core::{
@@ -25,7 +26,10 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use uuid::Uuid;
 
+mod fusion;
 mod mcp;
+
+use fusion::{SemHit, fuse};
 
 #[derive(Clone)]
 pub(crate) struct AppState {
@@ -34,6 +38,9 @@ pub(crate) struct AppState {
     pub(crate) embedder: Option<Arc<daimon_vec::Embedder>>,
     pub(crate) vector: Option<Arc<daimon_vec::VectorStore>>,
     pub(crate) default_tenant: Uuid,
+    /// Bearer token (`DAIMON_API_KEY`). When set, every route except /health + /readyz
+    /// requires `Authorization: Bearer <token>`. Unset = open (dev/quickstart only).
+    pub(crate) api_token: Option<Arc<String>>,
 }
 
 #[tokio::main]
@@ -53,10 +60,14 @@ async fn main() -> anyhow::Result<()> {
     let vector = match std::env::var("DAIMON_QDRANT_URL") {
         Ok(url) => match daimon_vec::VectorStore::connect(&url) {
             Ok(vs) => {
-                if let Err(e) = vs.ensure().await {
-                    tracing::warn!(%e, "qdrant ensure failed");
+                // Only claim "connected" when ensure actually succeeded; per-request
+                // searches retry, so a startup failure is degraded, not fatal.
+                match vs.ensure().await {
+                    Ok(()) => tracing::info!(%url, "semantic tier: qdrant connected"),
+                    Err(e) => {
+                        tracing::warn!(%e, %url, "semantic tier: qdrant ensure failed at startup; semantic recall degraded until it recovers")
+                    }
                 }
-                tracing::info!(%url, "semantic tier: qdrant connected");
                 Some(Arc::new(vs))
             }
             Err(e) => {
@@ -84,26 +95,72 @@ async fn main() -> anyhow::Result<()> {
         None
     };
 
+    let api_token = match env::var("DAIMON_API_KEY") {
+        Ok(t) if !t.trim().is_empty() => {
+            tracing::info!("auth: bearer token required on /v1 + /mcp (DAIMON_API_KEY set)");
+            Some(Arc::new(t))
+        }
+        _ => {
+            tracing::warn!(
+                "auth: DAIMON_API_KEY unset - the API is OPEN; anyone with network reach can read/write memory"
+            );
+            None
+        }
+    };
+
     let state = AppState {
         store,
         embedder,
         vector,
         default_tenant,
+        api_token,
     };
-    let app = Router::new()
-        .route("/health", get(health))
-        .route("/readyz", get(readyz))
+    // /health + /readyz stay unauthenticated (probes); everything else is token-gated
+    // when DAIMON_API_KEY is set.
+    let protected = Router::new()
         .route("/v1/memory", post(store_h))
         .route("/v1/recall", post(recall_h))
         .route("/v1/read", get(read_h))
         .route("/mcp", post(mcp::handle))
+        .route_layer(middleware::from_fn_with_state(state.clone(), auth_mw));
+    let app = Router::new()
+        .route("/health", get(health))
+        .route("/readyz", get(readyz))
+        .merge(protected)
         .with_state(state);
 
     let addr: SocketAddr = bind.parse()?;
-    tracing::info!(%addr, %default_tenant, "daimon-mcp listening");
+    tracing::info!(%addr, %default_tenant, version = env!("CARGO_PKG_VERSION"), "daimon-mcp listening");
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, app).await?;
+    // Graceful shutdown: on SIGTERM (k8s rollout/evict) or Ctrl-C, stop accepting new
+    // connections and let in-flight requests finish instead of cutting them mid-store.
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
+        .await?;
+    tracing::info!("daimon-mcp shut down cleanly");
     Ok(())
+}
+
+/// Resolves on SIGTERM or Ctrl-C (whichever first).
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        let _ = tokio::signal::ctrl_c().await;
+    };
+    #[cfg(unix)]
+    let terminate = async {
+        if let Ok(mut sig) =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+        {
+            sig.recv().await;
+        }
+    };
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+    tokio::select! {
+        _ = ctrl_c => {}
+        _ = terminate => {}
+    }
+    tracing::info!("shutdown signal received; draining in-flight requests");
 }
 
 fn tenant_from(headers: &HeaderMap, default: Uuid) -> Uuid {
@@ -114,6 +171,33 @@ fn tenant_from(headers: &HeaderMap, default: Uuid) -> Uuid {
         .unwrap_or(default)
 }
 
+/// Bearer-token gate. Fail-closed when `DAIMON_API_KEY` is configured; pass-through when not.
+async fn auth_mw(State(st): State<AppState>, req: Request, next: Next) -> Response {
+    let Some(expected) = st.api_token.as_deref() else {
+        return next.run(req).await;
+    };
+    let provided = req
+        .headers()
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .unwrap_or("");
+    if constant_time_eq(provided.as_bytes(), expected.as_bytes()) {
+        next.run(req).await
+    } else {
+        (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({"error": "unauthorized", "detail": "missing or invalid bearer token"})),
+        )
+            .into_response()
+    }
+}
+
+/// Length-leaking only; per-byte comparison runs in constant time.
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+}
+
 async fn health() -> impl IntoResponse {
     Json(json!({
         "status": "ok",
@@ -122,15 +206,32 @@ async fn health() -> impl IntoResponse {
     }))
 }
 
+/// A backlog older than this is surfaced as a warning on /readyz (readiness stays OK -
+/// it signals "semantic recall is going stale", not "stop sending traffic"). ~10 min.
+const OUTBOX_STALE_SECS: f64 = 600.0;
+
 async fn readyz(State(st): State<AppState>) -> impl IntoResponse {
-    if st.store.ping().await {
-        (StatusCode::OK, Json(json!({"ready": true})))
-    } else {
-        (
+    if !st.store.ping().await {
+        return (
             StatusCode::SERVICE_UNAVAILABLE,
             Json(json!({"ready": false, "reason": "postgres unreachable"})),
-        )
+        );
     }
+    // Readiness is PG-reachability only. Outbox lag is advisory: a stalled/dead indexer
+    // (the known failure mode the retired monitoring stack used to catch) shows up here as
+    // a warning field without flapping the probe.
+    let mut body = json!({"ready": true});
+    if let Some((pending, oldest)) = st.store.outbox_lag().await {
+        body["outbox_pending"] = json!(pending);
+        body["outbox_oldest_age_secs"] = json!(oldest);
+        if pending > 0 && oldest.map(|a| a > OUTBOX_STALE_SECS).unwrap_or(false) {
+            body["outbox_warning"] = json!(format!(
+                "{pending} unprocessed for >{:.0}s - is daimon-indexer running?",
+                OUTBOX_STALE_SECS
+            ));
+        }
+    }
+    (StatusCode::OK, Json(body))
 }
 
 /// POST /v1/memory - validate (deterministic control layer) + persist.
@@ -141,7 +242,10 @@ async fn store_h(
 ) -> impl IntoResponse {
     let scope = ContextScope::tenant(tenant_from(&headers, st.default_tenant));
     match st.store.store(&scope, w).await {
-        Ok(uri) => (StatusCode::CREATED, Json(json!({"uri": uri.display_relative()}))),
+        Ok(uri) => (
+            StatusCode::CREATED,
+            Json(json!({"uri": uri.display_relative()})),
+        ),
         Err(MemoryError::Validation(m)) | Err(MemoryError::InvalidNamespace(m)) => (
             StatusCode::BAD_REQUEST,
             Json(json!({"error": "validation", "detail": m})),
@@ -173,122 +277,83 @@ async fn recall_h(
 }
 
 /// Hybrid recall: RRF fusion of keyword (Postgres FTS) + semantic (Qdrant dense).
-/// Degrades to whichever tier is available; never hard-fails.
+/// Degrades to whichever tier is available; never hard-fails. This function owns only the
+/// I/O (DB + Qdrant + embedder); the deterministic ranking math lives in [`fusion::fuse`].
 pub(crate) async fn hybrid_recall(
     st: &AppState,
     scope: &ContextScope,
     query: &str,
     filters: &RecallFilters,
 ) -> Vec<serde_json::Value> {
-    use std::collections::HashMap;
-    const K: f32 = 60.0;
-    // Max additive importance boost: ~4 inter-rank RRF gaps at importance 100 (one gap with
-    // K=60 is ~0.000264). Advisory, never enough to overtake a both-arms-strong result.
-    const IMPORTANCE_BOOST_MAX: f32 = 0.001;
-    // uri -> (kind, title, abstract, fused_rrf, sources, importance, raw_keyword, raw_semantic)
-    let mut acc: HashMap<String, (String, String, String, f32, Vec<&'static str>, u8, f32, f32)> =
-        HashMap::new();
+    // Clamp once at the fusion boundary so both arms share the same bound (the keyword arm
+    // clamps again in SQL; the semantic arm previously passed the wire value straight to top_k).
+    let limit = filters.limit.clamp(1, 200);
 
     // keyword (Postgres FTS)
-    if let Ok(pg) = st.store.find(scope, query, filters).await {
-        for (rank, h) in pg.iter().enumerate() {
-            let e = acc.entry(h.uri.clone()).or_insert_with(|| {
-                (
-                    h.kind.as_str().to_string(),
-                    h.title.clone(),
-                    h.abstract_.clone(),
-                    0.0,
-                    vec![],
-                    h.importance,
-                    0.0,
-                    0.0,
-                )
-            });
-            e.3 += 1.0 / (K + rank as f32 + 1.0);
-            e.4.push("keyword");
-            if e.5 == 0 {
-                e.5 = h.importance;
-            }
-            e.6 = h.score; // raw ts_rank
+    let keyword = match st.store.find(scope, query, filters).await {
+        Ok(pg) => pg,
+        Err(e) => {
+            tracing::warn!(%e, "recall: keyword arm failed; continuing without it");
+            vec![]
         }
-    }
+    };
 
     // semantic (Qdrant dense) - only when both embedder + vector store are present.
-    if !query.trim().is_empty() {
-        if let (Some(emb), Some(vs)) = (&st.embedder, &st.vector) {
-            if let Ok(mut q) = emb.embed(&[query.to_string()]) {
+    let mut semantic: Vec<SemHit> = vec![];
+    if !query.trim().is_empty()
+        && let (Some(emb), Some(vs)) = (&st.embedder, &st.vector)
+    {
+        match emb.embed(&[query.to_string()]) {
+            Ok(mut q) => {
                 if let Some(qv) = q.pop() {
-                    if let Ok(vhits) = vs.search(scope.tenant_id, qv, filters.limit as u64).await {
-                        for (rank, vh) in vhits.iter().enumerate() {
-                            let p = &vh.payload;
-                            let uri =
-                                p.get("uri").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                            if uri.is_empty() {
-                                continue;
-                            }
-                            // Qdrant only filters by tenant_id (see daimon-vec::search), so the
-                            // namespace_prefix scope must be enforced here to match the keyword arm
-                            // (daimon-pg: `namespace LIKE $prefix%`). Prefix match on the payload's
-                            // namespace field; skip cross-namespace semantic leaks.
-                            if let Some(prefix) = filters.namespace_prefix.as_deref() {
-                                let ns =
-                                    p.get("namespace").and_then(|v| v.as_str()).unwrap_or("");
-                                if !ns.starts_with(prefix) {
-                                    continue;
-                                }
-                            }
-                            let kind =
-                                p.get("kind").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                            let title =
-                                p.get("title").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                            let abs = p
-                                .get("abstract")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("")
-                                .to_string();
-                            let imp =
-                                p.get("importance").and_then(|v| v.as_u64()).unwrap_or(0) as u8;
-                            let e = acc
-                                .entry(uri)
-                                .or_insert_with(|| (kind, title, abs, 0.0, vec![], imp, 0.0, 0.0));
-                            e.3 += 1.0 / (K + rank as f32 + 1.0);
-                            e.4.push("semantic");
-                            if e.5 == 0 {
-                                e.5 = imp;
-                            }
-                            e.7 = vh.score; // raw cosine
+                    // namespace_prefix is post-filtered in fuse() (Qdrant can't prefix-match
+                    // a keyword payload), so over-fetch to avoid starving scoped recalls
+                    // whose nearest tenant-wide neighbours live in other namespaces.
+                    let fetch_k = if filters.namespace_prefix.is_some() {
+                        (limit * 5).min(200)
+                    } else {
+                        limit
+                    } as u64;
+                    let kind = filters.kind.map(|k| k.as_str());
+                    let since_epoch = filters.since.map(|t| t.timestamp());
+                    match vs
+                        .search(scope.tenant_id, qv, fetch_k, kind, since_epoch)
+                        .await
+                    {
+                        Ok(vhits) => semantic = vhits.iter().map(sem_hit_from_payload).collect(),
+                        Err(e) => {
+                            tracing::warn!(%e, "recall: semantic arm failed; continuing keyword-only")
                         }
                     }
                 }
             }
+            Err(e) => {
+                tracing::warn!(%e, "recall: query embedding failed; continuing keyword-only")
+            }
         }
     }
 
-    let mut out: Vec<serde_json::Value> = acc
-        .into_iter()
-        .map(|(uri, (kind, title, abs, score, srcs, importance, raw_kw, raw_sem))| {
-            let boosted = score + (importance as f32 / 100.0) * IMPORTANCE_BOOST_MAX;
-            json!({
-                "uri": strip_tenant_segment(&uri), "kind": kind, "title": title, "abstract": abs,
-                "score": boosted,
-                "importance": importance,
-                "sources": srcs,
-                "scores": {"rrf": score, "raw_keyword": raw_kw, "raw_semantic": raw_sem}
-            })
-        })
-        .collect();
-    // Sort by boosted score; deterministic tie-break (importance, then uri) removes the
-    // HashMap-iteration non-determinism on equal scores.
-    out.sort_by(|a, b| {
-        b["score"]
-            .as_f64()
-            .partial_cmp(&a["score"].as_f64())
-            .unwrap_or(std::cmp::Ordering::Equal)
-            .then_with(|| b["importance"].as_u64().cmp(&a["importance"].as_u64()))
-            .then_with(|| a["uri"].as_str().cmp(&b["uri"].as_str()))
-    });
-    out.truncate(filters.limit.max(1));
-    out
+    fuse(
+        &keyword,
+        &semantic,
+        filters.namespace_prefix.as_deref(),
+        limit,
+    )
+}
+
+/// Project a Qdrant hit's payload into the plain [`SemHit`] fusion consumes.
+fn sem_hit_from_payload(vh: &daimon_vec::VecHit) -> SemHit {
+    let p = &vh.payload;
+    let s = |k: &str| p.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
+    SemHit {
+        uri: s("uri"),
+        kind: s("kind"),
+        title: s("title"),
+        abstract_: s("abstract"),
+        namespace: s("namespace"),
+        importance: p.get("importance").and_then(|v| v.as_u64()).unwrap_or(0) as u8,
+        score: vh.score,
+    }
 }
 
 #[derive(Deserialize)]
@@ -327,4 +392,3 @@ async fn read_h(
         ),
     }
 }
-

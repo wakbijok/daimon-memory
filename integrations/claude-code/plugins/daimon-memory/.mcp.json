@@ -3,7 +3,8 @@
     "type": "http",
     "url": "${DAIMON_ENDPOINT:-http://localhost:8080}/mcp",
     "headers": {
-      "X-Daimon-Tenant": "${DAIMON_TENANT:-00000000-0000-0000-0000-0000000000d1}"
+      "X-Daimon-Tenant": "${DAIMON_TENANT:-00000000-0000-0000-0000-0000000000d1}",
+      "Authorization": "Bearer ${DAIMON_API_KEY:-}"
     }
   }
 }

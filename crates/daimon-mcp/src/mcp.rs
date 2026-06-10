@@ -205,7 +205,12 @@ async fn call_tool(st: &AppState, headers: &HeaderMap, id: &Value, params: &Valu
                 Some(k) => k,
                 None => return ok(id, tool_err("invalid or missing 'kind'".into())),
             };
-            let getstr = |k: &str| args.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let getstr = |k: &str| {
+                args.get(k)
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string()
+            };
             let fields = args
                 .get("fields")
                 .and_then(|f| f.as_object())
@@ -214,7 +219,11 @@ async fn call_tool(st: &AppState, headers: &HeaderMap, id: &Value, params: &Valu
             let tags = args
                 .get("tags")
                 .and_then(|t| t.as_array())
-                .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                })
                 .unwrap_or_default();
             let importance = args.get("importance").and_then(|i| i.as_u64()).unwrap_or(0) as u8;
             let w = MemoryWrite {
@@ -234,7 +243,11 @@ async fn call_tool(st: &AppState, headers: &HeaderMap, id: &Value, params: &Valu
             }
         }
         "recall" => {
-            let query = args.get("query").and_then(|q| q.as_str()).unwrap_or("").to_string();
+            let query = args
+                .get("query")
+                .and_then(|q| q.as_str())
+                .unwrap_or("")
+                .to_string();
             let filters = RecallFilters {
                 kind: args
                     .get("kind")
@@ -249,16 +262,14 @@ async fn call_tool(st: &AppState, headers: &HeaderMap, id: &Value, params: &Valu
                 limit: args.get("limit").and_then(|l| l.as_u64()).unwrap_or(10) as usize,
             };
             // Hybrid (keyword + semantic RRF) - the SAME path as /v1/recall, so the explicit
-            // recall tool consults embeddings, not Postgres FTS alone. (Was st.store.find.)
-            let mut hits = crate::hybrid_recall(st, &scope, &query, &filters).await;
-            for h in &mut hits {
-                if let Some(rel) = h.get("uri").and_then(|v| v.as_str()).map(strip_tenant_segment) {
-                    if let Some(o) = h.as_object_mut() {
-                        o.insert("uri".to_string(), Value::String(rel));
-                    }
-                }
-            }
-            ok(id, tool_text(serde_json::to_string_pretty(&hits).unwrap_or_default()))
+            // recall tool consults embeddings, not Postgres FTS alone. hybrid_recall already
+            // emits tenant-relative URIs; stripping again here ate the namespace root and
+            // broke the recall -> read loop.
+            let hits = crate::hybrid_recall(st, &scope, &query, &filters).await;
+            ok(
+                id,
+                tool_text(serde_json::to_string_pretty(&hits).unwrap_or_default()),
+            )
         }
         "read" => {
             let uri = args.get("uri").and_then(|u| u.as_str()).unwrap_or("");
@@ -266,7 +277,10 @@ async fn call_tool(st: &AppState, headers: &HeaderMap, id: &Value, params: &Valu
                 Ok(u) => match st.store.read(&scope, &u).await {
                     Ok(mut rec) => {
                         rec.uri = strip_tenant_segment(&rec.uri);
-                        ok(id, tool_text(serde_json::to_string_pretty(&rec).unwrap_or_default()))
+                        ok(
+                            id,
+                            tool_text(serde_json::to_string_pretty(&rec).unwrap_or_default()),
+                        )
                     }
                     Err(e) => ok(id, tool_err(format!("{e}"))),
                 },
@@ -277,19 +291,47 @@ async fn call_tool(st: &AppState, headers: &HeaderMap, id: &Value, params: &Valu
             let mut f = serde_json::Map::new();
             f.insert("context".into(), Value::String(sarg(&args, "context")));
             f.insert("rationale".into(), Value::String(sarg(&args, "rationale")));
-            let body = body_or(&args, &format!("{}\n\n{}", sarg(&args, "context"), sarg(&args, "rationale")));
-            do_store(st, &scope, id, MemoryKind::Decision, ns_or(&args, "resources/coding/decisions"), sarg(&args, "title"), body, f, imp(&args)).await
+            let body = body_or(
+                &args,
+                &format!("{}\n\n{}", sarg(&args, "context"), sarg(&args, "rationale")),
+            );
+            do_store(
+                st,
+                &scope,
+                id,
+                MemoryKind::Decision,
+                ns_or(&args, "resources/coding/decisions"),
+                sarg(&args, "title"),
+                body,
+                f,
+                imp(&args),
+            )
+            .await
         }
         "log_lesson" => {
             let mut f = serde_json::Map::new();
             f.insert("lesson".into(), Value::String(sarg(&args, "lesson")));
             let body = body_or(&args, &sarg(&args, "lesson"));
-            do_store(st, &scope, id, MemoryKind::AgentLesson, ns_or(&args, "agent/lessons"), sarg(&args, "title"), body, f, imp(&args)).await
+            do_store(
+                st,
+                &scope,
+                id,
+                MemoryKind::AgentLesson,
+                ns_or(&args, "agent/lessons"),
+                sarg(&args, "title"),
+                body,
+                f,
+                imp(&args),
+            )
+            .await
         }
         "log_incident" => {
             let mut f = serde_json::Map::new();
             f.insert("impact".into(), Value::String(sarg(&args, "impact")));
-            f.insert("resolution".into(), Value::String(sarg(&args, "resolution")));
+            f.insert(
+                "resolution".into(),
+                Value::String(sarg(&args, "resolution")),
+            );
             let sev = sarg(&args, "severity");
             if !sev.is_empty() {
                 f.insert("severity".into(), Value::String(sev));
@@ -298,14 +340,39 @@ async fn call_tool(st: &AppState, headers: &HeaderMap, id: &Value, params: &Valu
             if !prev.is_empty() {
                 f.insert("prevention".into(), Value::String(prev));
             }
-            let body = body_or(&args, &format!("{}\n\n{}", sarg(&args, "impact"), sarg(&args, "resolution")));
-            do_store(st, &scope, id, MemoryKind::IncidentSummary, ns_or(&args, "resources/incidents"), sarg(&args, "title"), body, f, imp(&args)).await
+            let body = body_or(
+                &args,
+                &format!("{}\n\n{}", sarg(&args, "impact"), sarg(&args, "resolution")),
+            );
+            do_store(
+                st,
+                &scope,
+                id,
+                MemoryKind::IncidentSummary,
+                ns_or(&args, "resources/incidents"),
+                sarg(&args, "title"),
+                body,
+                f,
+                imp(&args),
+            )
+            .await
         }
         "add_reminder" => {
             let mut f = serde_json::Map::new();
             f.insert("due".into(), Value::String(sarg(&args, "due")));
             let body = body_or(&args, &sarg(&args, "title"));
-            do_store(st, &scope, id, MemoryKind::Reminder, ns_or(&args, "agent/workstream"), sarg(&args, "title"), body, f, imp(&args)).await
+            do_store(
+                st,
+                &scope,
+                id,
+                MemoryKind::Reminder,
+                ns_or(&args, "agent/workstream"),
+                sarg(&args, "title"),
+                body,
+                f,
+                imp(&args),
+            )
+            .await
         }
         "browse" => {
             let prefix = sarg(&args, "prefix");
@@ -315,7 +382,10 @@ async fn call_tool(st: &AppState, headers: &HeaderMap, id: &Value, params: &Valu
                     tool_text(if uris.is_empty() {
                         "(no records under this prefix)".to_string()
                     } else {
-                        uris.iter().map(|u| u.display_relative()).collect::<Vec<_>>().join("\n")
+                        uris.iter()
+                            .map(|u| u.display_relative())
+                            .collect::<Vec<_>>()
+                            .join("\n")
                     }),
                 ),
                 Err(e) => ok(id, tool_err(format!("{e}"))),
@@ -323,7 +393,10 @@ async fn call_tool(st: &AppState, headers: &HeaderMap, id: &Value, params: &Valu
         }
         "forget" => {
             let uri_s = sarg(&args, "uri");
-            let confirm = args.get("confirm").and_then(|c| c.as_bool()).unwrap_or(false);
+            let confirm = args
+                .get("confirm")
+                .and_then(|c| c.as_bool())
+                .unwrap_or(false);
             // Durable buckets (agent/, resources/) are confirm-gated; user/ + session/ forget freely.
             let durable = uri_s.contains("/agent/") || uri_s.contains("/resources/");
             if durable && !confirm {
@@ -345,14 +418,21 @@ async fn call_tool(st: &AppState, headers: &HeaderMap, id: &Value, params: &Valu
 }
 
 fn sarg(args: &Value, k: &str) -> String {
-    args.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string()
+    args.get(k)
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string()
 }
 fn imp(args: &Value) -> u8 {
     args.get("importance").and_then(|i| i.as_u64()).unwrap_or(0) as u8
 }
 fn ns_or(args: &Value, default: &str) -> String {
     let n = args.get("namespace").and_then(|v| v.as_str()).unwrap_or("");
-    if n.is_empty() { default.to_string() } else { n.to_string() }
+    if n.is_empty() {
+        default.to_string()
+    } else {
+        n.to_string()
+    }
 }
 fn body_or(args: &Value, default: &str) -> String {
     let b = sarg(args, "body");

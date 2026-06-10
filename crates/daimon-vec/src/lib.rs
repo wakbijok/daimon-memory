@@ -13,7 +13,7 @@ use fastembed::{EmbeddingModel, TextEmbedding, TextInitOptions};
 use qdrant_client::Qdrant;
 use qdrant_client::qdrant::{
     Condition, CreateCollectionBuilder, DeletePointsBuilder, Distance, Filter, PointStruct,
-    PointsIdsList, SearchPointsBuilder, UpsertPointsBuilder, VectorParamsBuilder,
+    PointsIdsList, Range, SearchPointsBuilder, UpsertPointsBuilder, VectorParamsBuilder,
 };
 use serde_json::Value as Json;
 use std::sync::Mutex;
@@ -48,7 +48,7 @@ impl Embedder {
             .inner
             .lock()
             .map_err(|_| MemoryError::Backend("embedder mutex poisoned".into()))?;
-        g.embed(texts.to_vec(), None)
+        g.embed(texts, None)
             .map_err(|e| MemoryError::Backend(format!("embed: {e}")))
     }
 
@@ -78,10 +78,42 @@ impl VectorStore {
         Ok(Self { client })
     }
 
+    /// `true` if Qdrant answers at all (liveness, not collection state). Lets callers
+    /// distinguish "infrastructure down" from "this record is poison".
+    pub async fn healthy(&self) -> bool {
+        self.client.collection_exists(COLLECTION).await.is_ok()
+    }
+
     /// Create the collection if absent (idempotent).
     pub async fn ensure(&self) -> Result<()> {
-        if self.client.collection_exists(COLLECTION).await.map_err(qe)? {
+        if self
+            .client
+            .collection_exists(COLLECTION)
+            .await
+            .map_err(qe)?
+        {
             return Ok(());
+        }
+        let req = CreateCollectionBuilder::new(COLLECTION)
+            .vectors_config(VectorParamsBuilder::new(DIM, Distance::Cosine));
+        self.client.create_collection(req).await.map_err(qe)?;
+        Ok(())
+    }
+
+    /// Drop and recreate the collection. Used by `daimon reindex` so a rebuild also PRUNES
+    /// points whose records were since forgotten/superseded - upsert-only rebuilds leak
+    /// retracted memories back into semantic recall.
+    pub async fn recreate(&self) -> Result<()> {
+        if self
+            .client
+            .collection_exists(COLLECTION)
+            .await
+            .map_err(qe)?
+        {
+            self.client
+                .delete_collection(COLLECTION)
+                .await
+                .map_err(qe)?;
         }
         let req = CreateCollectionBuilder::new(COLLECTION)
             .vectors_config(VectorParamsBuilder::new(DIM, Distance::Cosine));
@@ -112,9 +144,35 @@ impl VectorStore {
         Ok(())
     }
 
-    /// Tenant-filtered nearest-neighbour search.
-    pub async fn search(&self, tenant: Uuid, query: Vec<f32>, top_k: u64) -> Result<Vec<VecHit>> {
-        let filter = Filter::must([Condition::matches("tenant_id", tenant.to_string())]);
+    /// Tenant-filtered nearest-neighbour search. `kind` and `since_epoch` (unix seconds,
+    /// matched against the `created_at` payload field) are pushed down into the Qdrant
+    /// filter so the semantic arm honors the same predicates as the keyword arm's SQL.
+    /// Note: namespace_prefix stays an in-process post-filter (Qdrant has no prefix match
+    /// on keyword payloads without a text index); callers over-fetch to compensate.
+    pub async fn search(
+        &self,
+        tenant: Uuid,
+        query: Vec<f32>,
+        top_k: u64,
+        kind: Option<&str>,
+        since_epoch: Option<i64>,
+    ) -> Result<Vec<VecHit>> {
+        let mut must = vec![Condition::matches("tenant_id", tenant.to_string())];
+        if let Some(k) = kind {
+            must.push(Condition::matches("kind", k.to_string()));
+        }
+        if let Some(since) = since_epoch {
+            // Points indexed before `created_at` existed in the payload are excluded when
+            // this filter applies - run `daimon reindex` once after upgrading.
+            must.push(Condition::range(
+                "created_at",
+                Range {
+                    gte: Some(since as f64),
+                    ..Default::default()
+                },
+            ));
+        }
+        let filter = Filter::must(must);
         let req = SearchPointsBuilder::new(COLLECTION, query, top_k)
             .filter(filter)
             .with_payload(true);

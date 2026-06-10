@@ -59,7 +59,7 @@ Three principles keep it light and trustworthy:
 
 ## The system layer: persona + discipline
 
-This is what turns a store into a disciplined operating system for an agent. Three typed records under `shared-canonical/system/`, authored by the `daimon` CLI, loaded into every tool at session start:
+This is what turns a store into a disciplined operating system for an agent. Three typed records — the persona under `agent/persona`, the two disciplines under `agent/protocol` — authored by the `daimon` CLI, loaded into every tool at session start:
 
 | Record | kind | what it carries |
 |---|---|---|
@@ -75,7 +75,7 @@ The **save-nudge engine** makes the save discipline bite. daimon has no auto-cap
 - **Cadence nudge:** after N quiet turns with no save, a capture-pass nudge. `N` is configurable (`DAIMON_NUDGE_CADENCE`, default 5; `DAIMON_NUDGE=off` disables).
 - **Session-end pass:** sweeps the session for anything uncaptured.
 
-It works across Claude Code (`UserPromptSubmit` + `SessionEnd`), Codex (`UserPromptSubmit`, lagged, parsing its rollout), and Hermes (in-process `sync_turn`). Full guide: see `daimon-docs/daimon-memory/system-layer.md`.
+It works across Claude Code (`UserPromptSubmit` + `SessionEnd`), Codex (`UserPromptSubmit`, lagged, parsing its rollout), and Hermes (in-process `sync_turn`).
 
 ## Retrieval: how recall works
 
@@ -118,7 +118,7 @@ A Rust workspace (edition 2024):
 | `daimon-vec` | In-process [fastembed](https://github.com/Anush008/fastembed-rs) **bge-small-en-v1.5** (384-d) embedder plus a Qdrant vector store. |
 | `daimon-indexer` | Singleton drainer: PostgreSQL outbox, embed `title + body`, Qdrant upsert/delete. |
 | `daimon-mcp` | Stateless server: REST `/v1` + MCP JSON-RPC `/mcp`; **hybrid recall** with importance weighting; the 9-tool surface; degrades to keyword-only if the vector tier is down. |
-| `daimon-cli` (`daimon`) | Ops + management: `migrate` / `reindex` / `health` / `stats`, and the system-layer authoring `persona` / `protocol seed` / `protocol import`. |
+| `daimon-cli` (`daimon`) | Ops + management: `migrate` / `reindex` / `health` / `stats` / `export` / `import`, and the system-layer authoring `persona` / `protocol seed` / `protocol import`. |
 
 **Data model** (`migrations/`): `records` (canonical, with `importance` + status), `namespaces` (the tree), `type_registry` (taxonomy + extensibility), `index_outbox` (Postgres to Qdrant).
 
@@ -154,7 +154,7 @@ curl -s localhost:8080/readyz
 
 curl -s -XPOST localhost:8080/v1/memory -H 'content-type: application/json' -d '{
   "kind": "decision",
-  "namespace": "shared-canonical/architecture/decisions",
+  "namespace": "resources/architecture/decisions",
   "title": "Adopt Postgres + Qdrant",
   "body": "Use Postgres as the canonical store and Qdrant as a rebuildable vector index.",
   "fields": { "context": "needed a shared memory store", "rationale": "deterministic recall, rebuildable index" }
@@ -190,7 +190,7 @@ Uninstall: `./install.sh --uninstall`.
 
 ### Claude Code (plugin) ✅
 
-A marketplace plugin: hot-memory recall + the persona/discipline loader on `SessionStart`, the save-nudge on `UserPromptSubmit`, a `SessionEnd` sweep, the full MCP tool surface, a `/daimon` command, and a mirror of Claude's own auto-memory into `claude-private/memory`.
+A marketplace plugin: hot-memory recall + the persona/discipline loader on `SessionStart`, the save-nudge on `UserPromptSubmit`, a `SessionEnd` sweep, the full MCP tool surface, a `/daimon` command, and a mirror of Claude's own auto-memory into `agent/lessons`.
 
 ```bash
 cd integrations/claude-code
@@ -202,7 +202,7 @@ cd integrations/claude-code
 
 ### Codex (plugin) ✅
 
-A fully-automated plugin (Codex has a `codex plugin` CLI): persona/discipline loader + recall + save-nudge, the MCP tools, and **native-memory mirroring**, the installer enables Codex's own memory and a hook mirrors it (read from Codex's SQLite store) into `codex-private/memory`.
+A fully-automated plugin (Codex has a `codex plugin` CLI): persona/discipline loader + recall + save-nudge, the MCP tools, and **native-memory mirroring**, the installer enables Codex's own memory and a hook mirrors it (read from Codex's SQLite store) into `agent/lessons`.
 
 ```bash
 cd integrations/codex
@@ -218,9 +218,11 @@ The `daimon` binary (shipped in the server image, or `cargo build --bin daimon`)
 
 ```bash
 daimon migrate            # apply schema migrations
-daimon reindex            # rebuild every Qdrant vector from Postgres
+daimon reindex            # drop + rebuild the Qdrant index from Postgres (prunes stale points)
 daimon health             # ping Postgres + Qdrant
 daimon stats              # record counts by kind + outbox + Qdrant points
+daimon export > memory.jsonl           # backup: every record as JSONL (all statuses)
+daimon import memory.jsonl             # restore (idempotent); then run: daimon reindex
 daimon persona            # interactive wizard: author the shared persona
 daimon protocol seed      # write the bundled default disciplines
 daimon protocol import <file-or-dir>   # import protocols from markdown (the ov-style file path)
@@ -235,10 +237,13 @@ Server + indexer (environment):
 | Variable | Purpose | Default |
 |----------|---------|---------|
 | `DAIMON_MCP_BIND` | Listen address | `0.0.0.0:8080` |
-| `PGHOST` `PGPORT` `PGUSER` `PGPASSWORD` `PGDATABASE` | PostgreSQL connection | (none) |
-| `DAIMON_QDRANT_URL` | Qdrant **gRPC** endpoint | `http://127.0.0.1:6334` |
+| `DAIMON_API_KEY` | Bearer token. When set, `/v1/*` + `/mcp` require `Authorization: Bearer <token>` (`/health` + `/readyz` stay open for probes). **Unset = the API is open** - fine on localhost, not on a shared network. | (unset = no auth) |
+| `PGHOST` `PGPORT` `PGUSER` `PGPASSWORD` `PGDATABASE` | PostgreSQL connection | `127.0.0.1` / `5432` / `daimon` / (empty) / `daimon_memory` |
+| `DAIMON_QDRANT_URL` | Qdrant **gRPC** endpoint | indexer/CLI: `http://127.0.0.1:6334`; server: unset = semantic tier disabled (keyword-only recall) |
 | `DAIMON_DEFAULT_TENANT` | Tenant used when no `X-Daimon-Tenant` header is sent | a fixed dev UUID |
 | `RUST_LOG` | Log level | `info` |
+
+Clients send the same token: the Claude Code / Codex installers ask for it (`--api-key`), Hermes reads `DAIMON_API_KEY` from its env, and the `daimon` CLI's persona/protocol commands pick it up from the environment.
 
 Client save-nudge (per tool):
 
@@ -254,13 +259,45 @@ Client save-nudge (per tool):
 - **Docker / Compose.** The included `Dockerfile` builds the binaries; `docker-compose.yml` runs the full stack.
 - **Kubernetes.** daimon-mcp is a stateless `Deployment` (with an HPA); PostgreSQL and Qdrant are `StatefulSet`s. The embedder needs **AVX2**; schedule daimon-mcp + daimon-indexer onto an AVX2 node. Build the image (for example with kaniko) and apply your manifests, or sync via GitOps.
 
+## Backup and restore
+
+**PostgreSQL is the canonical store and is NOT rebuildable** - persona, decisions, lessons live only there. Qdrant is disposable (`daimon reindex` rebuilds it); the outbox makes it eventually consistent. Back up Postgres like you would any database you care about:
+
+```bash
+# logical dump (compose; -T = no TTY, keeps the stream byte-clean):
+docker compose exec -T postgres pg_dump -U daimon daimon_memory | gzip > daimon-$(date +%F).sql.gz
+# restore:
+gunzip -c daimon-2026-06-10.sql.gz | docker compose exec -T postgres psql -U daimon daimon_memory
+
+# storage-engine-agnostic (works across Postgres versions / into a fresh stack):
+docker compose exec -T daimon-mcp daimon export > memory.jsonl
+docker compose exec -T daimon-mcp daimon import -  < memory.jsonl   # idempotent
+docker compose exec -T daimon-mcp daimon reindex                    # rebuild vectors after import
+```
+
+On Kubernetes, run `pg_dump` from a CronJob to durable storage (NFS/object store). `daimon reindex` only rebuilds the **vector index** - it cannot recover lost records.
+
+## Observability
+
+There is no metrics stack; the signals live on the endpoints:
+
+- `GET /readyz` returns `{ready, outbox_pending, outbox_oldest_age_secs}` and, when the backlog is older than ~10 min, an `outbox_warning`. A growing `outbox_pending` means the **indexer is stalled or dead** and semantic recall is going stale - the one number worth alerting on. Readiness itself only flips on Postgres being unreachable.
+- `GET /health` reports the running `version` (handy to confirm a rollout landed).
+- `daimon stats` prints record counts by kind + pending outbox depth.
+- Both binaries shut down gracefully on SIGTERM (k8s rollout/evict): the server drains in-flight requests, the indexer stops cleanly between batches (every batch is already crash-safe).
+
+## Upgrading an existing deployment
+
+- **Run `daimon reindex` once after upgrading.** The semantic index payload now carries `created_at` (used by the `since` filter); points indexed by an older version lack it and are excluded whenever a `since` filter applies, until reindexed.
+- **Pre-G1 namespaces:** if you have records under the retired `shared-canonical/*` / `*-private/*` roots, move them to the current roots (`user/`, `agent/`, `resources/`, `session/`) - e.g. `UPDATE memory.records SET namespace = 'agent/persona', uri_path = replace(uri_path, '/shared-canonical/system/', '/agent/persona/') WHERE namespace = 'shared-canonical/system';` per old path, or `daimon export` | rewrite | `daimon import` into a fresh database - then `daimon reindex`. Personas/protocols left under the old roots are not found by the session-start loader (it reads `agent/`).
+
 ## Status and roadmap
 
-> ⚠️ **Experimental.** Feature-complete and tested, but APIs may change before a tagged release. Not yet recommended for production.
+> ⚠️ **Experimental.** Feature-complete; the deterministic core - domain model, URI/namespace grammar, write validation, and the **RRF recall fusion** - is unit-tested, and the save-nudge engine has node tests with a cross-client parity check. Integration paths against live Postgres/Qdrant are still exercised manually. APIs may change before a tagged release. Not yet recommended for production.
 
-**Working today:** typed control-layer writes (12 kinds, Update-mode supersede) · hybrid recall (GIN keyword + HNSW semantic, RRF, importance-weighted, raw scores) · the outbox-to-Qdrant indexer · REST + MCP (9-tool surface) · the shared persona + behavioral/save discipline layer · the deterministic save-nudge engine across all three tools · per-tool capture (Claude auto-memory mirror, Codex native-memory mirror, Hermes curated capture) · the `daimon` CLI (ops + persona + protocol seed/import) · Hermes, Claude Code, and Codex integrations.
+**Working today:** typed control-layer writes (12 kinds, Update-mode supersede) · hybrid recall (GIN keyword + HNSW semantic, RRF, importance-weighted, raw scores, kind/since filters on both arms) · the outbox-to-Qdrant indexer (per-row retry + dead-letter) · REST + MCP (9-tool surface) · shared-secret bearer auth (`DAIMON_API_KEY`) · the shared persona + behavioral/save discipline layer · the deterministic save-nudge engine across all three tools · per-tool capture (Claude auto-memory mirror, Codex native-memory mirror, Hermes curated capture) · the `daimon` CLI (ops + backup `export`/`import` + persona + protocol seed/import) · Hermes, Claude Code, and Codex integrations.
 
-**Planned:** bearer-token auth mapped to a tenant · a least-privilege DB role so RLS is the active enforcer · streamable-HTTP `/mcp` SSE · sharper recall ranking (larger embedder, optional reranker) · memory consolidation/decay.
+**Planned:** per-tenant auth tokens · a least-privilege DB role so RLS is the active enforcer · streamable-HTTP `/mcp` SSE · sharper recall ranking (larger embedder, optional reranker) · memory consolidation/decay · integration tests against real Postgres/Qdrant.
 
 ## Contributing
 

@@ -139,14 +139,13 @@ impl MemoryUri {
         let comps: Vec<&str> = path.split('/').collect();
         // tenant / <namespace: >=2 comps> / record_type / record_id  => min 5 comps.
         if comps.len() < 5 {
-            return Err(MemoryError::InvalidUri(format!(
-                "too few components: {s}"
-            )));
+            return Err(MemoryError::InvalidUri(format!("too few components: {s}")));
         }
         let tenant_id = Uuid::parse_str(comps[0])
             .map_err(|_| MemoryError::InvalidUri(format!("bad tenant uuid: {}", comps[0])))?;
-        let record_id = Uuid::parse_str(comps[comps.len() - 1])
-            .map_err(|_| MemoryError::InvalidUri(format!("bad record uuid: {}", comps[comps.len() - 1])))?;
+        let record_id = Uuid::parse_str(comps[comps.len() - 1]).map_err(|_| {
+            MemoryError::InvalidUri(format!("bad record uuid: {}", comps[comps.len() - 1]))
+        })?;
         let record_type = MemoryKind::parse(comps[comps.len() - 2])?;
         let namespace = Namespace::parse(&comps[1..comps.len() - 2].join("/"))?;
         Ok(MemoryUri {
@@ -206,12 +205,14 @@ impl fmt::Display for MemoryUri {
 /// Strip the `{tenant}/` segment from a full `daimon://{tenant}/...` string, yielding the
 /// tenant-relative client form `daimon://{rest}`. Used for the raw `uri_path` strings carried
 /// by `MemoryHit`/`MemoryRecord` (which have no `#tier`). Returns the input unchanged if it is
-/// not a recognizable full URI (defensive; the DB always stores the full form).
+/// not a recognizable full URI (defensive; the DB always stores the full form). Idempotent:
+/// only strips when the first segment parses as a tenant `Uuid` (the same detection
+/// `parse_scoped` uses on input), so an already-relative URI passes through untouched.
 pub fn strip_tenant_segment(uri: &str) -> String {
     match uri.strip_prefix("daimon://") {
         Some(rest) => match rest.split_once('/') {
-            Some((_tenant, tail)) => format!("daimon://{tail}"),
-            None => uri.to_string(),
+            Some((first, tail)) if Uuid::parse_str(first).is_ok() => format!("daimon://{tail}"),
+            _ => uri.to_string(),
         },
         None => uri.to_string(),
     }
@@ -241,8 +242,14 @@ mod tests {
 
     #[test]
     fn parse_agent_and_user() {
-        assert_eq!(Namespace::parse("agent/persona").unwrap().root, NamespaceRoot::Agent);
-        assert_eq!(Namespace::parse("user/preferences").unwrap().root, NamespaceRoot::User);
+        assert_eq!(
+            Namespace::parse("agent/persona").unwrap().root,
+            NamespaceRoot::Agent
+        );
+        assert_eq!(
+            Namespace::parse("user/preferences").unwrap().root,
+            NamespaceRoot::User
+        );
     }
 
     #[test]
@@ -292,7 +299,10 @@ mod tests {
         let full = "daimon://00000000-0000-0000-0000-000000000001/resources/coding/decision/00000000-0000-0000-0000-0000000000aa#L0";
         let uri = MemoryUri::parse_scoped(full, tenant).unwrap();
         // Full URI keeps its own embedded tenant, NOT the default.
-        assert_eq!(uri.tenant_id, Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap());
+        assert_eq!(
+            uri.tenant_id,
+            Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap()
+        );
         assert_eq!(uri.to_string(), full);
     }
 
@@ -323,5 +333,29 @@ mod tests {
             strip_tenant_segment(full),
             "daimon://resources/coding/decision/00000000-0000-0000-0000-0000000000aa"
         );
+    }
+
+    #[test]
+    fn strip_tenant_segment_is_idempotent() {
+        // Regression: the MCP recall tool used to re-strip hybrid_recall's already-relative
+        // URIs, eating the namespace root and breaking the recall -> read loop.
+        let full = "daimon://00000000-0000-0000-0000-000000000001/resources/coding/decision/00000000-0000-0000-0000-0000000000aa";
+        let once = strip_tenant_segment(full);
+        assert_eq!(strip_tenant_segment(&once), once);
+        // A 2-segment namespace must also survive (agent/lessons would have lost its root).
+        let rel = "daimon://agent/lessons/agent_lesson/00000000-0000-0000-0000-0000000000bb";
+        assert_eq!(strip_tenant_segment(rel), rel);
+    }
+
+    #[test]
+    fn stripped_uri_round_trips_through_parse_scoped() {
+        let tenant = Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap();
+        let full = format!(
+            "daimon://{tenant}/resources/coding/decision/00000000-0000-0000-0000-0000000000aa"
+        );
+        let rel = strip_tenant_segment(&full);
+        let uri = MemoryUri::parse_scoped(&rel, tenant).unwrap();
+        assert_eq!(uri.tenant_id, tenant);
+        assert_eq!(uri.record_type, MemoryKind::Decision);
     }
 }

@@ -74,6 +74,24 @@ impl PgStore {
             Err(_) => false,
         }
     }
+
+    /// Index-outbox backlog: (unprocessed rows, age of the oldest unprocessed row in seconds).
+    /// Surfaces the indexer's known failure mode (a dead/stalled drainer) on the server's
+    /// readiness endpoint, since the indexer itself exposes no metrics. `None` if Postgres is
+    /// unreachable. A growing lag = semantic recall is silently going stale.
+    pub async fn outbox_lag(&self) -> Option<(i64, Option<f64>)> {
+        let client = self.pool.get().await.ok()?;
+        let row = client
+            .query_one(
+                "SELECT count(*)::bigint AS pending,
+                        extract(epoch FROM now() - min(created_at)) AS oldest_age_secs
+                 FROM memory.index_outbox WHERE processed_at IS NULL",
+                &[],
+            )
+            .await
+            .ok()?;
+        Some((row.get("pending"), row.get("oldest_age_secs")))
+    }
 }
 
 fn backend<E: std::fmt::Display>(e: E) -> MemoryError {
@@ -82,7 +100,8 @@ fn backend<E: std::fmt::Display>(e: E) -> MemoryError {
 
 /// Deterministic content hash for dedup (MVP JCS-lite: kind + title + body + sorted fields).
 fn content_sha(w: &MemoryWrite) -> String {
-    let sorted: BTreeMap<String, &serde_json::Value> = w.fields.iter().map(|(k, v)| (k.clone(), v)).collect();
+    let sorted: BTreeMap<String, &serde_json::Value> =
+        w.fields.iter().map(|(k, v)| (k.clone(), v)).collect();
     let canon = serde_json::json!({
         "kind": w.kind.as_str(),
         "title": w.title,
@@ -140,7 +159,12 @@ impl ContextMemory for PgStore {
         let abstract_ = abstract_of(&write.body);
         let fields = serde_json::Value::Object(write.fields.clone());
         let source_refs = serde_json::Value::Array(
-            write.source_refs.iter().cloned().map(serde_json::Value::String).collect(),
+            write
+                .source_refs
+                .iter()
+                .cloned()
+                .map(serde_json::Value::String)
+                .collect(),
         );
 
         let mut client = self.pool.get().await.map_err(backend)?;

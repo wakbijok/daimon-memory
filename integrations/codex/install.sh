@@ -7,19 +7,20 @@
 # (Codex does not inject a plugin-root env into hook subprocesses), writes the hook config,
 # and registers + installs via the CLI.
 #
-# Usage:  ./install.sh [--endpoint URL] [--tenant UUID] [--yes]
+# Usage:  ./install.sh [--endpoint URL] [--tenant UUID] [--api-key TOKEN] [--yes]
 # ============================================================================
 set -euo pipefail
 
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
 DEV_TENANT="00000000-0000-0000-0000-0000000000d1"
-ENDPOINT=""; TENANT=""; ASSUME_YES=0
+ENDPOINT=""; TENANT=""; API_KEY="${DAIMON_API_KEY:-}"; ASSUME_YES=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --endpoint) ENDPOINT="$2"; shift 2;;
     --tenant) TENANT="$2"; shift 2;;
+    --api-key) API_KEY="$2"; shift 2;;
     -y|--yes) ASSUME_YES=1; shift;;
     -h|--help) sed -n '2,12p' "$0"; exit 0;;
     *) echo "unknown arg: $1" >&2; exit 2;;
@@ -70,6 +71,8 @@ echo "Installs the daimon-memory plugin (hot-memory recall + MCP tools)."
 hr
 ask ENDPOINT "daimon-memory endpoint - the URL where your daimon-memory server runs" "http://localhost:8080"
 ask TENANT   "Tenant ID - which memory space to use (match your other tools)"        "$DEV_TENANT"
+ask API_KEY  "API key - bearer token if the server sets DAIMON_API_KEY (empty = no auth)" ""
+[ "$API_KEY" = "none" ] && API_KEY=""
 
 if command -v curl >/dev/null 2>&1; then
   curl -sf --max-time 4 "$ENDPOINT/readyz" >/dev/null 2>&1 \
@@ -86,11 +89,23 @@ PLUGIN_DIR="$STABLE/plugins/daimon-memory"
 # Substitute placeholders (Codex doesn't inject CODEX_PLUGIN_ROOT into hooks).
 sed -i.bak "s|__DAIMON_PLUGIN_ROOT__|$PLUGIN_DIR|g" "$PLUGIN_DIR/hooks/hooks.json"; rm -f "$PLUGIN_DIR/hooks/hooks.json.bak"
 sed -i.bak "s|__DAIMON_MCP_URL__|$ENDPOINT/mcp|g" "$PLUGIN_DIR/.mcp.json"; rm -f "$PLUGIN_DIR/.mcp.json.bak"
+sed -i.bak "s|__DAIMON_API_KEY__|$API_KEY|g" "$PLUGIN_DIR/.mcp.json"; rm -f "$PLUGIN_DIR/.mcp.json.bak"
 
-# Config the hooks read (Codex hook subprocesses don't get env reliably).
-cat > "$PLUGIN_DIR/scripts/lib/daimon.config.json" <<EOF
-{ "endpoint": "$ENDPOINT", "tenant": "$TENANT" }
+# Config the hooks read (Codex hook subprocesses don't get env reliably). lib/daimon.mjs
+# loads this file as the fallback between env and the dev defaults. Prefer python3 so a key
+# containing JSON-special characters can't silently produce a malformed (= ignored) config.
+if command -v python3 >/dev/null 2>&1; then
+  ENDPOINT="$ENDPOINT" TENANT="$TENANT" API_KEY="$API_KEY" CFG="$PLUGIN_DIR/scripts/lib/daimon.config.json" python3 - <<'PY'
+import json, os
+json.dump({"endpoint": os.environ["ENDPOINT"], "tenant": os.environ["TENANT"],
+           "apiKey": os.environ["API_KEY"]}, open(os.environ["CFG"], "w"))
+PY
+else
+  cat > "$PLUGIN_DIR/scripts/lib/daimon.config.json" <<EOF
+{ "endpoint": "$ENDPOINT", "tenant": "$TENANT", "apiKey": "$API_KEY" }
 EOF
+fi
+chmod 600 "$PLUGIN_DIR/scripts/lib/daimon.config.json"
 echo "  baked plugin root, MCP url ($ENDPOINT/mcp), and hook config"
 
 # Enable Codex native memory so the mirror has something to read (best-effort, idempotent;

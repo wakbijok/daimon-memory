@@ -1,12 +1,14 @@
 #!/usr/bin/env node
-// SessionStart hook. Injects, once per session: (1) the canonical PERSONA + operating
-// protocols from agent/persona + agent/protocol (the hook-injected instruction layer, full bodies),
-// then (2) recent high-signal shared memory (empty-query recall, excluding the system layer
-// so persona records are not shown twice). Seeds the session "already injected" set so the
-// per-turn recall stays incremental. Best-effort: any failure injects nothing.
+// SessionStart hook (Codex variant). Injects, once per session: (1) the canonical PERSONA +
+// operating protocols from agent/persona + agent/protocol (the hook-injected instruction
+// layer, full bodies), then (2) recent high-signal shared memory (empty-query recall,
+// excluding the system layer so persona records are not shown twice). Seeds the session
+// "already injected" set so the per-turn recall stays incremental. Best-effort: any failure
+// injects nothing.
+// NOTE: unlike the claude-code copy, there is NO compaction-continuity block here - Codex
+// has no PreCompact hook, so precompact-state.mjs does not exist in this plugin.
 import { readStdin, recall, formatHits, loadSystemBlock, injectAndExit, ENDPOINT } from "./lib/daimon.mjs";
 import { clearInjected, markInjected } from "./recall-state.mjs";
-import { loadPrecompact, clearPrecompact } from "./precompact-state.mjs";
 
 const input = await readStdin();
 const sessionId = input.session_id || input.sessionId || "default";
@@ -29,26 +31,6 @@ const recentBlock = formatHits(
 const parts = [];
 if (persona) parts.push(persona);
 if (recentBlock) parts.push(recentBlock + "\n</daimon-memory>");
-
-// Compaction-only continuity: after a compaction (source=compact), re-inject the volatile
-// working context the summary tends to drop (captured by precompact.mjs), then clear it.
-if (input.source === "compact") {
-  const snap = loadPrecompact(sessionId);
-  if (snap) {
-    const lines = [
-      "<compaction-continuity>",
-      "[Pre-compaction working context, re-anchor after the summary:]",
-      `- branch: ${snap.branch}  |  cwd: ${snap.cwd}`,
-    ];
-    if (snap.plan) lines.push(`- active plan: ${snap.plan}`);
-    if (Array.isArray(snap.dirty) && snap.dirty.length) {
-      lines.push("- modified files:\n" + snap.dirty.map((d) => "  " + d).join("\n"));
-    }
-    lines.push("</compaction-continuity>");
-    parts.unshift(lines.join("\n"));
-    clearPrecompact(sessionId);
-  }
-}
 
 // Seed the session set so the per-turn recall does not re-inject what we just showed.
 markInjected(sessionId, recentHits.map((h) => h.uri));

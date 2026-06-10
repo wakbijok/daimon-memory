@@ -1,7 +1,10 @@
 {
   "mcpServers": {
     "daimon": {
-      "url": "__DAIMON_MCP_URL__"
+      "url": "__DAIMON_MCP_URL__",
+      "headers": {
+        "Authorization": "Bearer __DAIMON_API_KEY__"
+      }
     }
   }
 }

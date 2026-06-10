@@ -1,10 +1,16 @@
-# In-cluster kaniko build for daimon-mcp:latest. No CI runner / local Docker needed.
+# In-cluster kaniko build for daimon-mcp. No CI runner / local Docker needed.
+#
+# Pushes TWO tags: the mutable :latest (what the Deployments track) AND an immutable
+# version tag (:0.2.0) for rollback. Bump the version tag in sync with the workspace
+# Cargo version (Cargo.toml [workspace.package] version) on each release.
 #
 # Usage (generateName, so use create not apply; each run gets a unique name):
 #   kubectl -n ai-workloads create -f deploy/build-job.yaml
 #   kubectl -n ai-workloads logs -f job/<generated-name>
 # Then, ArgoCD-safe rollout of the new :latest (set image gets reverted by ArgoCD):
-#   kubectl -n ai-workloads rollout restart deploy/daimon-mcp
+#   kubectl -n ai-workloads rollout restart deploy/daimon-mcp deploy/daimon-indexer
+# Rollback: pin the Deployment image to a version tag in the gitops repo (e.g.
+#   .../daimon-mcp:0.2.0) and let ArgoCD sync - immutable, unlike re-pulling :latest.
 #
 # Pinned to celebrimbor: 12-core bare-metal vs the 4-core VMs (~3x faster compile).
 # Pair with the cargo-chef Dockerfile + --cache here so unchanged deps are a cache HIT
@@ -45,6 +51,7 @@ spec:
         - --context=git://git.wakbijok.uk/daimon/daimon-memory.git#refs/heads/main
         - --dockerfile=Dockerfile
         - --destination=glcr.wakbijok.uk/daimon/daimon-memory/daimon-mcp:latest
+        - --destination=glcr.wakbijok.uk/daimon/daimon-memory/daimon-mcp:0.2.0
         - --cache=true
         - --cache-repo=glcr.wakbijok.uk/daimon/daimon-memory/cache
         - --verbosity=info

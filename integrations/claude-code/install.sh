@@ -9,19 +9,20 @@
 #   2) prints the two /plugin commands to run inside Claude Code to add + install it
 #
 # Run with no args for a guided setup:  ./install.sh
-# Non-interactive: ./install.sh --endpoint URL --tenant UUID --yes
+# Non-interactive: ./install.sh --endpoint URL --tenant UUID [--api-key TOKEN] --yes
 # ============================================================================
 set -euo pipefail
 
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SETTINGS="${CLAUDE_SETTINGS:-$HOME/.claude/settings.json}"
 DEV_TENANT="00000000-0000-0000-0000-0000000000d1"
-ENDPOINT=""; TENANT=""; ASSUME_YES=0
+ENDPOINT=""; TENANT=""; API_KEY="${DAIMON_API_KEY:-}"; ASSUME_YES=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --endpoint) ENDPOINT="$2"; shift 2;;
     --tenant) TENANT="$2"; shift 2;;
+    --api-key) API_KEY="$2"; shift 2;;
     -y|--yes) ASSUME_YES=1; shift;;
     -h|--help) sed -n '2,14p' "$0"; exit 0;;
     *) echo "unknown arg: $1" >&2; exit 2;;
@@ -45,6 +46,7 @@ echo "Configures Claude Code to use daimon-memory (shared, cross-tool memory)."
 hr
 ask ENDPOINT "daimon-memory endpoint - the URL where your daimon-memory server runs" "http://localhost:8080"
 ask TENANT   "Tenant ID - which memory space to use (match your other tools)"        "$DEV_TENANT"
+ask API_KEY  "API key - bearer token if the server sets DAIMON_API_KEY (empty = no auth)" ""
 
 # Best-effort reachability note.
 if command -v curl >/dev/null 2>&1; then
@@ -55,17 +57,25 @@ fi
 
 echo "Writing DAIMON_ENDPOINT / DAIMON_TENANT into $SETTINGS (env block)..."
 cp "$SETTINGS" "$SETTINGS.bak-daimon"
-ENDPOINT="$ENDPOINT" TENANT="$TENANT" SETTINGS="$SETTINGS" python3 - <<'PY'
+ENDPOINT="$ENDPOINT" TENANT="$TENANT" API_KEY="$API_KEY" SETTINGS="$SETTINGS" python3 - <<'PY'
 import json, os
 p = os.environ["SETTINGS"]
 d = json.load(open(p))
 env = d.setdefault("env", {})
 env["DAIMON_ENDPOINT"] = os.environ["ENDPOINT"]
 env["DAIMON_TENANT"] = os.environ["TENANT"]
-json.dump(d, open(p, "w"), indent=2); open(p, "a").write("\n")
 print("  set env.DAIMON_ENDPOINT =", os.environ["ENDPOINT"])
 print("  set env.DAIMON_TENANT   =", os.environ["TENANT"])
+if os.environ.get("API_KEY"):
+    env["DAIMON_API_KEY"] = os.environ["API_KEY"]
+    print("  set env.DAIMON_API_KEY  = (hidden)")
+else:
+    # Re-run with an empty key cleanly removes a stale token (auth turned off).
+    env.pop("DAIMON_API_KEY", None)
+json.dump(d, open(p, "w"), indent=2); open(p, "a").write("\n")
 PY
+# settings.json now (may) hold a bearer token - keep it owner-readable like the other stores.
+[ -n "$API_KEY" ] && chmod 600 "$SETTINGS"
 
 hr; bold "Last step: install the plugin in Claude Code"
 echo "Run these inside Claude Code (the /plugin UI), then restart:"

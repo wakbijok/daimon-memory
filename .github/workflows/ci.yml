@@ -21,3 +21,21 @@ jobs:
         run: cargo test --workspace --locked
       - name: Build (release binaries)
         run: cargo build --release --bin daimon-mcp --bin daimon-indexer --bin daimon
+
+  hooks-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Hook scripts parse and exit 0 with no backend
+        run: |
+          for f in integrations/*/plugins/daimon-memory/scripts/*.mjs; do
+            node --check "$f"
+            echo '{}' | DAIMON_ENDPOINT=http://127.0.0.1:9 node "$f" >/dev/null
+          done
+      - name: Save-nudge unit tests + cross-copy parity
+        run: node --test "integrations/tests/"*.test.mjs
+      - name: Hermes provider compiles
+        run: python3 -m py_compile integrations/hermes/daimon/__init__.py

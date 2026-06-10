@@ -1,10 +1,28 @@
-// Shared config + HTTP helpers for the daimon-memory Claude Code plugin.
-// Config comes from env (the installer writes these into Claude Code settings.json `env`,
-// or set them in your shell). Defaults are dev-friendly.
+// Shared config + HTTP helpers for the daimon-memory plugin.
+// This file is maintained as a byte-identical copy in the claude-code and codex plugins -
+// sync any edit to both.
+//
+// Config precedence: env > daimon.config.json (written next to this module by installers
+// whose host doesn't pass env to hook subprocesses - Codex) > dev-friendly defaults.
 
-export const ENDPOINT = (process.env.DAIMON_ENDPOINT || "http://localhost:8080").replace(/\/+$/, "");
-export const TENANT = process.env.DAIMON_TENANT || "00000000-0000-0000-0000-0000000000d1";
-export const NAMESPACE = process.env.DAIMON_NAMESPACE || "agent/lessons";
+import { readFileSync } from "node:fs";
+
+let fileCfg = {};
+try {
+  fileCfg = JSON.parse(readFileSync(new URL("./daimon.config.json", import.meta.url), "utf8"));
+} catch { /* absent (claude-code) or malformed: env/defaults apply */ }
+
+export const ENDPOINT = (process.env.DAIMON_ENDPOINT || fileCfg.endpoint || "http://localhost:8080").replace(/\/+$/, "");
+export const TENANT = process.env.DAIMON_TENANT || fileCfg.tenant || "00000000-0000-0000-0000-0000000000d1";
+export const NAMESPACE = process.env.DAIMON_NAMESPACE || fileCfg.namespace || "agent/lessons";
+// Bearer token; required when the server sets DAIMON_API_KEY. Empty = no auth header.
+export const API_KEY = process.env.DAIMON_API_KEY || fileCfg.apiKey || "";
+
+function headers(extra = {}) {
+  const h = { "x-daimon-tenant": TENANT, ...extra };
+  if (API_KEY) h.authorization = `Bearer ${API_KEY}`;
+  return h;
+}
 
 // Read the hook payload Claude Code passes on stdin.
 export async function readStdin() {
@@ -29,7 +47,7 @@ export async function recall(query, { limit = 6, kind = null, namespacePrefix = 
     if (namespacePrefix) filters.namespace_prefix = namespacePrefix;
     const r = await fetch(`${ENDPOINT}/v1/recall`, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-daimon-tenant": TENANT },
+      headers: headers({ "content-type": "application/json" }),
       body: JSON.stringify({ query: query || "", filters }),
       signal: ctrl.signal,
     });
@@ -51,7 +69,7 @@ export async function store(payload) {
   try {
     const r = await fetch(`${ENDPOINT}/v1/memory`, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-daimon-tenant": TENANT },
+      headers: headers({ "content-type": "application/json" }),
       body: JSON.stringify(payload),
       signal: ctrl.signal,
     });
@@ -69,7 +87,7 @@ export async function read(uri) {
   const timer = setTimeout(() => ctrl.abort(), 6000);
   try {
     const r = await fetch(`${ENDPOINT}/v1/read?uri=${encodeURIComponent(uri)}`, {
-      headers: { "x-daimon-tenant": TENANT },
+      headers: headers(),
       signal: ctrl.signal,
     });
     if (!r.ok) return null;

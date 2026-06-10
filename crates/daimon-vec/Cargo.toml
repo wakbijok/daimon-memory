@@ -9,7 +9,13 @@ description = "Embedding + Qdrant vector store for daimon-memory semantic recall
 [dependencies]
 daimon-memory-core = { workspace = true }
 qdrant-client.workspace = true
-fastembed = "5"
+# default-features pull image-models (rav1e/image/exr - a full AV1+image codec stack we
+# never use for text embeddings) and native-tls (openssl). Text-only + rustls keeps the
+# dep tree lean and matches the workspace's rustls-everywhere intent (reqwest, qdrant).
+fastembed = { version = "5", default-features = false, features = [
+    "hf-hub-rustls-tls",
+    "ort-download-binaries-rustls-tls",
+] }
 tokio.workspace = true
 async-trait.workspace = true
 serde_json.workspace = true

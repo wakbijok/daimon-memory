@@ -52,6 +52,13 @@ gen_uuid() {
     || python3 -c 'import uuid;print(uuid.uuid4())' 2>/dev/null \
     || echo "$DEV_TENANT"
 }
+# Secret generation must NEVER fall back to a constant (gen_uuid's $DEV_TENANT fallback is
+# fine for an ID, fatal for a credential). Abort if no entropy source exists.
+gen_secret() {
+  openssl rand -hex 32 2>/dev/null \
+    || python3 -c 'import secrets;print(secrets.token_hex(32))' 2>/dev/null \
+    || { echo "ERROR: cannot generate an API key (need openssl or python3) - pass one explicitly" >&2; exit 1; }
+}
 backup_env() { [ -f "$ENV_FILE" ] && cp "$ENV_FILE" "$ENV_FILE.bak.$(date +%s 2>/dev/null || echo bak)" && dim "  (backed up existing .env)"; return 0; }
 
 hr; bold "daimon-memory installer"
@@ -75,12 +82,16 @@ if [ "$RUN_MODE" = "2" ]; then
   ask    QURL       "Qdrant gRPC URL (note: gRPC port 6334, not the 6333 REST port)" "http://localhost:6334"
   ask    BINDADDR   "API listen address (host:port)"          "0.0.0.0:8080"
   ask    TENANT     "Default tenant ID (groups your memories; keep default unless you run isolated spaces)" "$DEV_TENANT"
+  ask    API_KEY    "API key - bearer token clients must send (blank = auto-generate; 'none' = open API)" ""
+  [ -z "$API_KEY" ] && API_KEY="$(gen_secret)" && dim "  (generated an API key; clients need it - see .env)"
+  [ "$API_KEY" = "none" ] && API_KEY=""
   echo
   bold "Summary"
   echo "  Postgres : ${PGUSER}@${PGHOST}:${PGPORT}/${PGDATABASE}"
   echo "  Qdrant   : ${QURL}"
   echo "  API bind : ${BINDADDR}"
   echo "  Tenant   : ${TENANT}"
+  echo "  Auth     : $([ -n "$API_KEY" ] && echo 'bearer token (saved to .env)' || echo 'NONE - open API')"
   echo
   confirm "Write this to $ENV_FILE ?" || { echo "Aborted."; exit 0; }
   backup_env
@@ -94,6 +105,7 @@ PGDATABASE=$PGDATABASE
 DAIMON_QDRANT_URL=$QURL
 DAIMON_MCP_BIND=$BINDADDR
 DAIMON_DEFAULT_TENANT=$TENANT
+DAIMON_API_KEY=$API_KEY
 RUST_LOG=info
 EOF
   chmod 600 "$ENV_FILE"
@@ -119,11 +131,15 @@ ask API_PORT  "API port - where the memory API listens on your machine" "8080"
 ask PG_PASS   "PostgreSQL password for the bundled DB (blank = auto-generate)" ""
 [ -z "$PG_PASS" ] && PG_PASS="$(gen_uuid | tr -d '-' | cut -c1-24)" && dim "  (generated a password)"
 ask TENANT    "Default tenant ID (keep default unless you run isolated memory spaces)" "$DEV_TENANT"
+ask API_KEY   "API key - bearer token clients must send (blank = auto-generate; 'none' = open API)" ""
+[ -z "$API_KEY" ] && API_KEY="$(gen_secret)" && dim "  (generated an API key; clients need it - see .env)"
+[ "$API_KEY" = "none" ] && API_KEY=""
 echo
 bold "Summary"
 echo "  API URL  : http://localhost:${API_PORT}"
 echo "  Tenant   : ${TENANT}"
 echo "  Postgres : bundled (password saved to .env)"
+echo "  Auth     : $([ -n "$API_KEY" ] && echo 'bearer token (saved to .env)' || echo 'NONE - open API')"
 echo
 confirm "Write $ENV_FILE and start the stack now?" || { echo "Aborted (nothing started)."; exit 0; }
 backup_env
@@ -132,6 +148,7 @@ cat > "$ENV_FILE" <<EOF
 DAIMON_PORT=$API_PORT
 DAIMON_PG_PASSWORD=$PG_PASS
 DAIMON_DEFAULT_TENANT=$TENANT
+DAIMON_API_KEY=$API_KEY
 EOF
 chmod 600 "$ENV_FILE"
 echo "Wrote $ENV_FILE"
@@ -172,6 +189,7 @@ echo "  Stop:       docker compose down        (add -v to also delete data)"
 echo
 echo "Next: connect a tool with the client installer, e.g."
 echo "  integrations/hermes/install.sh --endpoint http://localhost:${API_PORT}"
+[ -n "$API_KEY" ] && echo "  (auth is ON: give each client installer the API key from .env, e.g. --api-key <token>)"
 echo "Persona: re-run the identity wizard anytime with"
 echo "  docker compose exec daimon-mcp daimon persona"
 echo "Protocols: seed defaults or import your own with"

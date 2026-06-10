@@ -1,0 +1,29 @@
+# CI for the STAGING remote (git.wakbijok.uk) - the branch the kaniko build Job actually
+# deploys from. Mirrors .github/workflows/ci.yml so deployed code is never untested code.
+# Requires a GitLab runner with the docker executor; if none is registered, register one or
+# this pipeline sits pending (delete this file if you never run GitLab CI).
+
+stages: [test]
+
+test:
+  stage: test
+  image: rust:1
+  variables:
+    CARGO_HOME: $CI_PROJECT_DIR/.cargo
+  cache:
+    key: cargo-$CI_COMMIT_REF_SLUG
+    paths:
+      - .cargo/registry
+      - target
+  before_script:
+    - apt-get update && apt-get install -y --no-install-recommends cmake protobuf-compiler nodejs
+  script:
+    - cargo test --workspace --locked
+    # hook scripts must at least parse + exit 0 with no backend (a broken hook kills
+    # every client session start). No `command -v` guard: a missing node must FAIL, not skip.
+    - |
+      for f in integrations/*/plugins/daimon-memory/scripts/*.mjs; do
+        node --check "$f"
+        echo '{}' | DAIMON_ENDPOINT=http://127.0.0.1:9 node "$f" >/dev/null
+      done
+    - node --test "integrations/tests/"*.test.mjs

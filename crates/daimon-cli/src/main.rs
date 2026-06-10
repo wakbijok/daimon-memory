@@ -2,10 +2,14 @@
 //!
 //! Subcommands:
 //! - `migrate` - apply embedded SQL migrations (refinery) to Postgres.
-//! - `reindex` - rebuild the entire Qdrant index from Postgres (the "Qdrant is
-//!   rebuildable from the canonical store" guarantee, made real).
+//! - `reindex` - drop + rebuild the entire Qdrant index from Postgres (the "Qdrant is
+//!   rebuildable from the canonical store" guarantee, made real - including PRUNING
+//!   points whose records were forgotten/superseded).
 //! - `health`  - ping Postgres + Qdrant.
 //! - `stats`   - record counts by kind + pending outbox + Qdrant point count.
+//! - `export`  - dump every record (all statuses) as JSONL to stdout (backup).
+//! - `import <file|->` - restore an export (idempotent: conflicting rows are skipped).
+//! - `persona` / `protocol seed|import` - author the shared system layer.
 //!
 //! Config via libpq env (PGHOST/PGPORT/PGUSER/PGPASSWORD/PGDATABASE) + DAIMON_QDRANT_URL.
 
@@ -51,12 +55,23 @@ async fn main() -> Result<()> {
         "reindex" => reindex().await,
         "health" => health().await,
         "stats" => stats().await,
+        "export" => export().await,
+        "import" => {
+            let path = std::env::args()
+                .nth(2)
+                .ok_or_else(|| anyhow::anyhow!("usage: daimon import <file|-> (- = stdin)"))?;
+            import(&path).await
+        }
         "persona" => persona().await,
         "protocol" => protocol().await,
         other => {
             eprintln!(
-                "daimon {} - usage: daimon <migrate|reindex|health|stats|persona|protocol>",
-                if other.is_empty() { "(no command)" } else { other }
+                "daimon {} - usage: daimon <migrate|reindex|health|stats|export|import <file|->|persona|protocol>",
+                if other.is_empty() {
+                    "(no command)"
+                } else {
+                    other
+                }
             );
             std::process::exit(2);
         }
@@ -73,7 +88,9 @@ async fn migrate() -> Result<()> {
     tokio::spawn(async move {
         let _ = conn.await;
     });
-    let report = embedded::migrations::runner().run_async(&mut client).await?;
+    let report = embedded::migrations::runner()
+        .run_async(&mut client)
+        .await?;
     let applied = report.applied_migrations();
     if applied.is_empty() {
         println!("migrate: up to date (no migrations applied)");
@@ -88,14 +105,20 @@ async fn migrate() -> Result<()> {
 async fn reindex() -> Result<()> {
     let pool = build_pool(&PgConfig::from_env())?;
     let store = VectorStore::connect(&qdrant_url()).map_err(to_anyhow)?;
-    store.ensure().await.map_err(to_anyhow)?;
+    // Drop + recreate so the rebuild also PRUNES stale points (forgotten/superseded
+    // records whose delete never reached Qdrant). Upsert-only rebuilds leak retracted
+    // memories back into semantic recall. Semantic recall degrades to keyword-only for
+    // the seconds the collection is being repopulated.
+    eprintln!("reindex: recreating collection (prunes stale points)…");
+    store.recreate().await.map_err(to_anyhow)?;
     eprintln!("reindex: loading embedder…");
     let embedder = Embedder::new().map_err(to_anyhow)?;
 
     let client = pool.get().await?;
     let rows = client
         .query(
-            "SELECT id, tenant_id, namespace, kind, title, abstract, body, importance, uri_path
+            "SELECT id, tenant_id, namespace, kind, title, abstract, body, importance, uri_path,
+                    extract(epoch FROM created_at)::bigint AS created_epoch
              FROM memory.records WHERE status='active'",
             &[],
         )
@@ -122,6 +145,7 @@ async fn reindex() -> Result<()> {
             "abstract": abstract_,
             "importance": importance,
             "uri": row.get::<_, String>("uri_path"),
+            "created_at": row.get::<_, i64>("created_epoch"),
         });
         store.upsert(id, vector, payload).await.map_err(to_anyhow)?;
         n += 1;
@@ -144,7 +168,11 @@ async fn health() -> Result<()> {
         "{}",
         json!({"postgres": pg_ok, "qdrant": qd_ok, "healthy": pg_ok && qd_ok})
     );
-    if pg_ok && qd_ok { Ok(()) } else { std::process::exit(1) }
+    if pg_ok && qd_ok {
+        Ok(())
+    } else {
+        std::process::exit(1)
+    }
 }
 
 async fn stats() -> Result<()> {
@@ -186,6 +214,190 @@ async fn stats() -> Result<()> {
     Ok(())
 }
 
+/// Dump every record (ALL statuses, full fidelity) as one JSON object per line to stdout.
+/// Postgres is the canonical, non-rebuildable store - this is the storage-engine-agnostic
+/// backup counterpart to `reindex` (which only rebuilds the disposable Qdrant side).
+/// Timestamps are exported as ISO-8601 text so import round-trips without a date dependency.
+async fn export() -> Result<()> {
+    use std::io::Write;
+    let pool = build_pool(&PgConfig::from_env())?;
+    let client = pool.get().await?;
+    let rows = client
+        .query(
+            "SELECT id, tenant_id, namespace, owner_user_id, agent_id, kind, title, body,
+                    abstract, fields, source_refs,
+                    tags, importance, confidence, content_sha, schema_version, status,
+                    supersedes_id, reverses_id, uri_path,
+                    to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS created_at,
+                    to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS updated_at
+             FROM memory.records ORDER BY created_at",
+            &[],
+        )
+        .await?;
+    let mut out = std::io::stdout().lock();
+    for row in &rows {
+        let rec = json!({
+            "id": row.get::<_, Uuid>("id").to_string(),
+            "tenant_id": row.get::<_, Uuid>("tenant_id").to_string(),
+            "namespace": row.get::<_, String>("namespace"),
+            "owner_user_id": row.get::<_, Option<Uuid>>("owner_user_id").map(|u| u.to_string()),
+            "agent_id": row.get::<_, Option<String>>("agent_id"),
+            "kind": row.get::<_, String>("kind"),
+            "title": row.get::<_, String>("title"),
+            "body": row.get::<_, String>("body"),
+            "abstract": row.get::<_, String>("abstract"),
+            "fields": row.get::<_, serde_json::Value>("fields"),
+            "source_refs": row.get::<_, serde_json::Value>("source_refs"),
+            "tags": row.get::<_, Vec<String>>("tags"),
+            "importance": row.get::<_, i16>("importance"),
+            "confidence": row.get::<_, f32>("confidence"),
+            "content_sha": row.get::<_, String>("content_sha"),
+            "schema_version": row.get::<_, i32>("schema_version"),
+            "status": row.get::<_, String>("status"),
+            "supersedes_id": row.get::<_, Option<Uuid>>("supersedes_id").map(|u| u.to_string()),
+            "reverses_id": row.get::<_, Option<Uuid>>("reverses_id").map(|u| u.to_string()),
+            "uri_path": row.get::<_, String>("uri_path"),
+            "created_at": row.get::<_, String>("created_at"),
+            "updated_at": row.get::<_, String>("updated_at"),
+        });
+        writeln!(out, "{}", serde_json::to_string(&rec)?)?;
+    }
+    eprintln!("export: {} record(s)", rows.len());
+    Ok(())
+}
+
+/// Restore a JSONL export. Idempotent: existing ids are skipped (ON CONFLICT DO NOTHING),
+/// so re-running a partial restore is safe. Rebuild the vector index afterwards with
+/// `daimon reindex` (import does not write the outbox).
+async fn import(path: &str) -> Result<()> {
+    use std::io::Read;
+    let mut raw = String::new();
+    if path == "-" {
+        std::io::stdin().read_to_string(&mut raw)?;
+    } else {
+        raw = std::fs::read_to_string(path)?;
+    }
+    let pool = build_pool(&PgConfig::from_env())?;
+    let client = pool.get().await?;
+
+    let s = |v: &serde_json::Value, k: &str| -> String {
+        v.get(k)
+            .and_then(|x| x.as_str())
+            .unwrap_or_default()
+            .to_string()
+    };
+    let mut inserted = 0usize;
+    let mut skipped = 0usize;
+    for (idx, line) in raw.lines().enumerate() {
+        let line_no = idx + 1;
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let v: serde_json::Value = serde_json::from_str(line)
+            .map_err(|e| anyhow::anyhow!("line {line_no}: invalid JSON: {e}"))?;
+        let id =
+            Uuid::parse_str(&s(&v, "id")).map_err(|_| anyhow::anyhow!("line {line_no}: bad id"))?;
+        let tenant = Uuid::parse_str(&s(&v, "tenant_id"))
+            .map_err(|_| anyhow::anyhow!("line {line_no}: bad tenant_id"))?;
+        let supersedes: Option<Uuid> = v
+            .get("supersedes_id")
+            .and_then(|x| x.as_str())
+            .and_then(|x| Uuid::parse_str(x).ok());
+        let reverses: Option<Uuid> = v
+            .get("reverses_id")
+            .and_then(|x| x.as_str())
+            .and_then(|x| Uuid::parse_str(x).ok());
+        let fields = v.get("fields").cloned().unwrap_or_else(|| json!({}));
+        let source_refs = v.get("source_refs").cloned().unwrap_or_else(|| json!([]));
+        let tags: Vec<String> = v
+            .get("tags")
+            .and_then(|x| x.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|t| t.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let importance = v.get("importance").and_then(|x| x.as_i64()).unwrap_or(0) as i16;
+        let confidence = v.get("confidence").and_then(|x| x.as_f64()).unwrap_or(1.0) as f32;
+        let schema_version = v
+            .get("schema_version")
+            .and_then(|x| x.as_i64())
+            .unwrap_or(1) as i32;
+        let (namespace, kind, title, body, abstract_) = (
+            s(&v, "namespace"),
+            s(&v, "kind"),
+            s(&v, "title"),
+            s(&v, "body"),
+            s(&v, "abstract"),
+        );
+        let (content_sha, status, uri_path) =
+            (s(&v, "content_sha"), s(&v, "status"), s(&v, "uri_path"));
+        let (created_at, updated_at) = (s(&v, "created_at"), s(&v, "updated_at"));
+        let owner_user_id: Option<Uuid> = v
+            .get("owner_user_id")
+            .and_then(|x| x.as_str())
+            .and_then(|x| Uuid::parse_str(x).ok());
+        let agent_id: Option<String> = v.get("agent_id").and_then(|x| x.as_str()).map(String::from);
+
+        // Bare ON CONFLICT (no target) absorbs ANY unique violation - both the (id) PK and
+        // the records_dedup_active partial index on (tenant_id, content_sha). Restoring into
+        // a non-empty DB where the same content was re-stored under a new id must skip, not
+        // abort the whole import.
+        let n = client
+            .execute(
+                "INSERT INTO memory.records
+                   (id, tenant_id, namespace, owner_user_id, agent_id, kind, title, body,
+                    abstract, fields, source_refs,
+                    tags, importance, confidence, content_sha, schema_version, status,
+                    supersedes_id, reverses_id, uri_path, created_at, updated_at)
+                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,
+                         $21::timestamptz,$22::timestamptz)
+                 ON CONFLICT DO NOTHING",
+                &[
+                    &id,
+                    &tenant,
+                    &namespace,
+                    &owner_user_id,
+                    &agent_id,
+                    &kind,
+                    &title,
+                    &body,
+                    &abstract_,
+                    &fields,
+                    &source_refs,
+                    &tags,
+                    &importance,
+                    &confidence,
+                    &content_sha,
+                    &schema_version,
+                    &status,
+                    &supersedes,
+                    &reverses,
+                    &uri_path,
+                    &created_at,
+                    &updated_at,
+                ],
+            )
+            .await?;
+        if n == 1 {
+            inserted += 1;
+            client
+                .execute(
+                    "INSERT INTO memory.namespaces (tenant_id, path) VALUES ($1,$2) ON CONFLICT DO NOTHING",
+                    &[&tenant, &namespace],
+                )
+                .await?;
+        } else {
+            skipped += 1;
+        }
+    }
+    println!("import: {inserted} inserted, {skipped} already present");
+    println!("import: now rebuild the vector index: daimon reindex");
+    Ok(())
+}
+
 fn prompt_line(prompt: &str, default: &str) -> String {
     use std::io::Write;
     print!("  {prompt}");
@@ -221,8 +433,14 @@ async fn persona() -> Result<()> {
     println!("Defines the shared identity every connected tool adopts at session start.\n");
     let ai_name = prompt_line("AI name (how it refers to itself)", "Assistant");
     let role = prompt_line("AI role (what it helps you do)", "collaborative partner");
-    let voice = prompt_line("Voice / tone", "direct, concise, technical; challenges weak ideas");
-    let avoid = prompt_line("What it must NOT do", "no hype, no hedging, no fabricated context");
+    let voice = prompt_line(
+        "Voice / tone",
+        "direct, concise, technical; challenges weak ideas",
+    );
+    let avoid = prompt_line(
+        "What it must NOT do",
+        "no hype, no hedging, no fabricated context",
+    );
     let user_name = prompt_line("Your name (how the AI addresses you)", &default_user);
     let user_job = prompt_line("Your work / role", "");
     let boundaries = prompt_line(
@@ -247,12 +465,14 @@ async fn persona() -> Result<()> {
         "importance": 95
     });
 
-    let resp = reqwest::Client::new()
+    let mut req = reqwest::Client::new()
         .post(format!("{endpoint}/v1/memory"))
         .header("x-daimon-tenant", &tenant)
-        .json(&record)
-        .send()
-        .await?;
+        .json(&record);
+    if let Some(token) = api_key() {
+        req = req.bearer_auth(token);
+    }
+    let resp = req.send().await?;
     let status = resp.status();
     let txt = resp.text().await.unwrap_or_default();
     if status.is_success() {
@@ -261,6 +481,13 @@ async fn persona() -> Result<()> {
     } else {
         anyhow::bail!("persona write failed ({status}): {txt}");
     }
+}
+
+/// Bearer token for the REST endpoint (same env the server + client hooks use).
+fn api_key() -> Option<String> {
+    std::env::var("DAIMON_API_KEY")
+        .ok()
+        .filter(|t| !t.trim().is_empty())
 }
 
 fn endpoint_tenant() -> (String, String) {
@@ -274,12 +501,14 @@ fn endpoint_tenant() -> (String, String) {
 }
 
 async fn post_memory(endpoint: &str, tenant: &str, record: &serde_json::Value) -> Result<String> {
-    let resp = reqwest::Client::new()
+    let mut req = reqwest::Client::new()
         .post(format!("{endpoint}/v1/memory"))
         .header("x-daimon-tenant", tenant)
-        .json(record)
-        .send()
-        .await?;
+        .json(record);
+    if let Some(token) = api_key() {
+        req = req.bearer_auth(token);
+    }
+    let resp = req.send().await?;
     let status = resp.status();
     let txt = resp.text().await.unwrap_or_default();
     if status.is_success() {
@@ -308,7 +537,11 @@ async fn protocol() -> Result<()> {
         other => {
             eprintln!(
                 "daimon protocol {} - usage: daimon protocol <seed|import <file-or-dir>>",
-                if other.is_empty() { "(no subcommand)" } else { other }
+                if other.is_empty() {
+                    "(no subcommand)"
+                } else {
+                    other
+                }
             );
             std::process::exit(2);
         }
@@ -408,12 +641,24 @@ fn parse_protocol_md(md: &str) -> Result<ProtoRec> {
         scope = "see body".to_string();
     }
     if rules.is_empty() {
-        rules = body.lines().next().unwrap_or("see body").chars().take(200).collect();
+        rules = body
+            .lines()
+            .next()
+            .unwrap_or("see body")
+            .chars()
+            .take(200)
+            .collect();
         if rules.trim().is_empty() {
             rules = "see body".to_string();
         }
     }
-    Ok(ProtoRec { title, scope, rules, namespace, body })
+    Ok(ProtoRec {
+        title,
+        scope,
+        rules,
+        namespace,
+        body,
+    })
 }
 
 fn to_anyhow(e: daimon_memory_core::MemoryError) -> anyhow::Error {

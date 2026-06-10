@@ -51,6 +51,8 @@ services:
       <<: *db-env
       DAIMON_MCP_BIND: 0.0.0.0:8080
       DAIMON_DEFAULT_TENANT: ${DAIMON_DEFAULT_TENANT:-00000000-0000-0000-0000-0000000000d1}
+      # Empty = open API (dev). Set in .env for anything reachable beyond localhost.
+      DAIMON_API_KEY: ${DAIMON_API_KEY:-}
     ports:
       - "${DAIMON_PORT:-8080}:8080"
     depends_on:

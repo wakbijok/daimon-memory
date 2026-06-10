@@ -47,7 +47,10 @@ let maxSeen = since;
 
 for (const r of rows) {
   const gen = Number(r.generated_at ?? 0);
-  if (gen <= since) continue; // already mirrored (watermark fast-path)
+  // Strictly-less-than: rows SHARING the watermark timestamp are re-posted each session,
+  // because a failure on the second of two same-timestamp rows would otherwise be skipped
+  // forever. The server's content-sha dedup makes the re-store an idempotent no-op.
+  if (gen < since) continue; // already mirrored (watermark fast-path)
   const text = String(r.raw_memory || "").trim();
   if (!text) continue;
 
@@ -56,7 +59,10 @@ for (const r of rows) {
   const title = (firstLine || r.rollout_slug || `codex-memory ${String(r.thread_id).slice(0, 12)}`)
     .slice(0, 120);
 
-  await store({
+  // Advance the watermark ONLY on confirmed store (true = stored or validation-reject;
+  // false = network failure). Stop at the first failure so the watermark stays contiguous -
+  // advancing past a failed row would permanently skip it on every future session.
+  const ok = await store({
     kind: "agent_lesson",
     namespace: "agent/lessons",
     title,
@@ -65,6 +71,7 @@ for (const r of rows) {
     tags: ["codex-memory", "mirror"],
     importance: 30,
   });
+  if (!ok) break;
   if (gen > maxSeen) maxSeen = gen;
 }
 
