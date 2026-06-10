@@ -38,9 +38,11 @@ pub(crate) struct AppState {
     pub(crate) embedder: Option<Arc<daimon_vec::Embedder>>,
     pub(crate) vector: Option<Arc<daimon_vec::VectorStore>>,
     pub(crate) default_tenant: Uuid,
-    /// Bearer token (`DAIMON_API_KEY`). When set, every route except /health + /readyz
-    /// requires `Authorization: Bearer <token>`. Unset = open (dev/quickstart only).
-    pub(crate) api_token: Option<Arc<String>>,
+    /// Valid bearer tokens. Collected from `DAIMON_API_KEY` plus any `DAIMON_API_KEY_*`
+    /// env var (one per client - e.g. `DAIMON_API_KEY_CLAUDE`), so per-client tokens can be
+    /// revoked independently. When non-empty, every route except /health + /readyz requires
+    /// `Authorization: Bearer <one-of-these>`. `None` = open (dev/quickstart only).
+    pub(crate) api_tokens: Option<Arc<Vec<String>>>,
 }
 
 #[tokio::main]
@@ -95,17 +97,29 @@ async fn main() -> anyhow::Result<()> {
         None
     };
 
-    let api_token = match env::var("DAIMON_API_KEY") {
-        Ok(t) if !t.trim().is_empty() => {
-            tracing::info!("auth: bearer token required on /v1 + /mcp (DAIMON_API_KEY set)");
-            Some(Arc::new(t))
-        }
-        _ => {
-            tracing::warn!(
-                "auth: DAIMON_API_KEY unset - the API is OPEN; anyone with network reach can read/write memory"
-            );
-            None
-        }
+    // Collect every configured bearer token: the bare DAIMON_API_KEY plus any
+    // DAIMON_API_KEY_* (one per client, so each can be revoked on its own). Order/count
+    // is not logged as a value; only how many are active.
+    let mut tokens: Vec<String> = env::vars()
+        .filter(|(k, _)| k == "DAIMON_API_KEY" || k.starts_with("DAIMON_API_KEY_"))
+        .filter_map(|(_, v)| {
+            let v = v.trim().to_string();
+            (!v.is_empty()).then_some(v)
+        })
+        .collect();
+    tokens.sort();
+    tokens.dedup();
+    let api_tokens = if tokens.is_empty() {
+        tracing::warn!(
+            "auth: no DAIMON_API_KEY[_*] set - the API is OPEN; anyone with network reach can read/write memory"
+        );
+        None
+    } else {
+        tracing::info!(
+            tokens = tokens.len(),
+            "auth: bearer token required on /v1 + /mcp"
+        );
+        Some(Arc::new(tokens))
     };
 
     let state = AppState {
@@ -113,7 +127,7 @@ async fn main() -> anyhow::Result<()> {
         embedder,
         vector,
         default_tenant,
-        api_token,
+        api_tokens,
     };
     // /health + /readyz stay unauthenticated (probes); everything else is token-gated
     // when DAIMON_API_KEY is set.
@@ -171,9 +185,9 @@ fn tenant_from(headers: &HeaderMap, default: Uuid) -> Uuid {
         .unwrap_or(default)
 }
 
-/// Bearer-token gate. Fail-closed when `DAIMON_API_KEY` is configured; pass-through when not.
+/// Bearer-token gate. Fail-closed when any token is configured; pass-through when none.
 async fn auth_mw(State(st): State<AppState>, req: Request, next: Next) -> Response {
-    let Some(expected) = st.api_token.as_deref() else {
+    let Some(expected) = st.api_tokens.as_deref() else {
         return next.run(req).await;
     };
     let provided = req
@@ -182,7 +196,7 @@ async fn auth_mw(State(st): State<AppState>, req: Request, next: Next) -> Respon
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
         .unwrap_or("");
-    if constant_time_eq(provided.as_bytes(), expected.as_bytes()) {
+    if token_matches(provided, expected) {
         next.run(req).await
     } else {
         (
@@ -193,9 +207,50 @@ async fn auth_mw(State(st): State<AppState>, req: Request, next: Next) -> Respon
     }
 }
 
+/// True if `provided` equals any configured token. Folds over all tokens without
+/// short-circuiting, so acceptance does not leak which key matched; the per-token compare
+/// is constant-time. An empty `provided` (no/blank header) never matches a non-empty token.
+fn token_matches(provided: &str, expected: &[String]) -> bool {
+    let p = provided.as_bytes();
+    expected
+        .iter()
+        .fold(false, |acc, t| acc | constant_time_eq(p, t.as_bytes()))
+}
+
 /// Length-leaking only; per-byte comparison runs in constant time.
 fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+}
+
+#[cfg(test)]
+mod auth_tests {
+    use super::token_matches;
+
+    fn keys() -> Vec<String> {
+        vec!["admin-aaa".into(), "claude-bbb".into(), "izu-ccc".into()]
+    }
+
+    #[test]
+    fn any_configured_token_is_accepted() {
+        let k = keys();
+        assert!(token_matches("admin-aaa", &k));
+        assert!(token_matches("claude-bbb", &k));
+        assert!(token_matches("izu-ccc", &k));
+    }
+
+    #[test]
+    fn wrong_empty_or_prefix_token_is_rejected() {
+        let k = keys();
+        assert!(!token_matches("nope", &k));
+        assert!(!token_matches("", &k)); // no/blank Authorization header
+        assert!(!token_matches("claude-bb", &k)); // length-mismatch prefix
+        assert!(!token_matches("claude-bbbb", &k));
+    }
+
+    #[test]
+    fn no_configured_tokens_matches_nothing() {
+        assert!(!token_matches("anything", &[]));
+    }
 }
 
 async fn health() -> impl IntoResponse {

@@ -237,7 +237,7 @@ Server + indexer (environment):
 | Variable | Purpose | Default |
 |----------|---------|---------|
 | `DAIMON_MCP_BIND` | Listen address | `0.0.0.0:8080` |
-| `DAIMON_API_KEY` | Bearer token. When set, `/v1/*` + `/mcp` require `Authorization: Bearer <token>` (`/health` + `/readyz` stay open for probes). **Unset = the API is open** - fine on localhost, not on a shared network. | (unset = no auth) |
+| `DAIMON_API_KEY` (+ `DAIMON_API_KEY_*`) | Bearer token(s). When any is set, `/v1/*` + `/mcp` require `Authorization: Bearer <one-of-them>` (`/health` + `/readyz` stay open for probes). Set **per-client** tokens with suffixed vars - e.g. `DAIMON_API_KEY_CLAUDE`, `DAIMON_API_KEY_IZU` - so one client can be revoked without touching the others. **Unset = the API is open** - fine on localhost, not on a shared network. | (unset = no auth) |
 | `PGHOST` `PGPORT` `PGUSER` `PGPASSWORD` `PGDATABASE` | PostgreSQL connection | `127.0.0.1` / `5432` / `daimon` / (empty) / `daimon_memory` |
 | `DAIMON_QDRANT_URL` | Qdrant **gRPC** endpoint | indexer/CLI: `http://127.0.0.1:6334`; server: unset = semantic tier disabled (keyword-only recall) |
 | `DAIMON_DEFAULT_TENANT` | Tenant used when no `X-Daimon-Tenant` header is sent | a fixed dev UUID |
