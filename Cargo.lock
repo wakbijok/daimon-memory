@@ -472,7 +472,7 @@ dependencies = [
 
 [[package]]
 name = "daimon-cli"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "daimon-memory-core",
@@ -490,7 +490,7 @@ dependencies = [
 
 [[package]]
 name = "daimon-indexer"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "daimon-memory-core",
@@ -507,7 +507,7 @@ dependencies = [
 
 [[package]]
 name = "daimon-mcp"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "axum 0.8.9",
@@ -524,7 +524,7 @@ dependencies = [
 
 [[package]]
 name = "daimon-memory-core"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "async-trait",
  "chrono",
@@ -536,7 +536,7 @@ dependencies = [
 
 [[package]]
 name = "daimon-pg"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "async-trait",
  "chrono",
@@ -552,7 +552,7 @@ dependencies = [
 
 [[package]]
 name = "daimon-vec"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "async-trait",
  "daimon-memory-core",
