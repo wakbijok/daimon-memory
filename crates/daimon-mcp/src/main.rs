@@ -224,7 +224,7 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
 
 #[cfg(test)]
 mod auth_tests {
-    use super::token_matches;
+    use super::{recall_tier, token_matches};
 
     fn keys() -> Vec<String> {
         vec!["admin-aaa".into(), "claude-bbb".into(), "izu-ccc".into()]
@@ -251,13 +251,33 @@ mod auth_tests {
     fn no_configured_tokens_matches_nothing() {
         assert!(!token_matches("anything", &[]));
     }
+
+    #[test]
+    fn recall_tier_needs_both_semantic_halves() {
+        assert_eq!(recall_tier(true, true), "hybrid");
+        assert_eq!(recall_tier(false, true), "keyword"); // no AVX2 / embedder init failed
+        assert_eq!(recall_tier(true, false), "keyword"); // qdrant absent
+        assert_eq!(recall_tier(false, false), "keyword");
+    }
 }
 
-async fn health() -> impl IntoResponse {
+/// Which recall path this process can serve: "hybrid" (keyword + semantic) when both the
+/// embedder and Qdrant were available at startup, else "keyword". "unhealthy" is reported
+/// by /readyz when Postgres (the keyword tier itself) is unreachable.
+fn recall_tier(has_embedder: bool, has_vector: bool) -> &'static str {
+    if has_embedder && has_vector {
+        "hybrid"
+    } else {
+        "keyword"
+    }
+}
+
+async fn health(State(st): State<AppState>) -> impl IntoResponse {
     Json(json!({
         "status": "ok",
         "service": "daimon-mcp",
         "version": env!("CARGO_PKG_VERSION"),
+        "recall_tier": recall_tier(st.embedder.is_some(), st.vector.is_some()),
     }))
 }
 
@@ -269,13 +289,16 @@ async fn readyz(State(st): State<AppState>) -> impl IntoResponse {
     if !st.store.ping().await {
         return (
             StatusCode::SERVICE_UNAVAILABLE,
-            Json(json!({"ready": false, "reason": "postgres unreachable"})),
+            Json(json!({"ready": false, "reason": "postgres unreachable", "recall_tier": "unhealthy"})),
         );
     }
     // Readiness is PG-reachability only. Outbox lag is advisory: a stalled/dead indexer
     // (the known failure mode the retired monitoring stack used to catch) shows up here as
     // a warning field without flapping the probe.
-    let mut body = json!({"ready": true});
+    let mut body = json!({
+        "ready": true,
+        "recall_tier": recall_tier(st.embedder.is_some(), st.vector.is_some()),
+    });
     if let Some((pending, oldest)) = st.store.outbox_lag().await {
         body["outbox_pending"] = json!(pending);
         body["outbox_oldest_age_secs"] = json!(oldest);

@@ -28,6 +28,21 @@ fn qe<E: std::fmt::Display>(e: E) -> MemoryError {
     MemoryError::Backend(e.to_string())
 }
 
+/// True when this CPU can run the embedder. The ort/ONNX build behind fastembed executes
+/// AVX2 instructions unconditionally on x86_64, so an AVX-only CPU dies with SIGILL (not a
+/// catchable error) at first inference, long after startup looked healthy. Gating init on
+/// this turns that crash into the normal degradation path (keyword-only recall).
+pub fn embedder_supported() -> bool {
+    #[cfg(target_arch = "x86_64")]
+    {
+        std::arch::is_x86_feature_detected!("avx2")
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        true // aarch64 (Apple silicon, Graviton) runs the NEON path fine
+    }
+}
+
 /// In-process dense embedder (bge-small, 384-d).
 pub struct Embedder {
     inner: Mutex<TextEmbedding>,
@@ -35,6 +50,11 @@ pub struct Embedder {
 
 impl Embedder {
     pub fn new() -> Result<Self> {
+        if !embedder_supported() {
+            return Err(MemoryError::Backend(
+                "avx2 unavailable; embedder disabled, recall degrades to keyword-only".into(),
+            ));
+        }
         let opts = TextInitOptions::new(EmbeddingModel::BGESmallENV15);
         let inner = TextEmbedding::try_new(opts)
             .map_err(|e| MemoryError::Backend(format!("embedder init: {e}")))?;

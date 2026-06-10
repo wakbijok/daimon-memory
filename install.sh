@@ -163,6 +163,18 @@ for _ in $(seq 1 30); do
   sleep 2
 done
 echo
+
+# AVX2 preflight (x86_64 only; arm64 runs the NEON path). Without AVX2 the embedder cannot
+# run and recall silently degrades to keyword-only, which otherwise takes log-spelunking to
+# discover. /readyz reports the resulting tier either way.
+( cd "$SELF_DIR" && docker compose exec -T daimon-mcp sh -c \
+    '[ "$(uname -m)" != "x86_64" ] || grep -qm1 avx2 /proc/cpuinfo' ) 2>/dev/null \
+  || {
+    echo "  WARN: AVX2 not detected on this host."
+    echo "        The embedder is disabled and recall falls back to keyword-only."
+    echo "        Run the stack on an AVX2-capable host for hybrid (semantic) recall;"
+    echo "        check with: curl -s localhost:${API_PORT}/readyz   (recall_tier field)"
+  }
 # Seed the default operating protocols (behavioral + save discipline) that every tool loads
 # at session start. Idempotent (Update-mode supersedes). Same in-image binary; import your own
 # later with: docker compose exec daimon-mcp daimon protocol import <file-or-dir>.
