@@ -4,14 +4,17 @@
 # deploy/build-job.yaml, so warm builds are ~2-3 min, cold ~8-12.
 #
 # test mirrors .github/workflows/ci.yml so deployed code is never untested code.
-# build + deploy run on main only: kaniko pushes :latest + the Cargo version tag, then
-# the deploy stage rollout-restarts the :latest-tracking Deployments (the documented
-# ArgoCD-safe procedure) under the gitlab-runner-ci ServiceAccount (deployments-only Role).
+# test and build-image run in PARALLEL (same stage): the image push is harmless on its
+# own, and only deploy - which gates on BOTH - makes it live. Wall time is therefore
+# max(test, build) + deploy instead of their sum. build + deploy run on main only:
+# kaniko pushes :latest + the Cargo version tag, then deploy rollout-restarts the
+# :latest-tracking Deployments (the documented ArgoCD-safe procedure) under the
+# gitlab-runner-ci ServiceAccount (deployments-only Role).
 
-stages: [test, build, deploy]
+stages: [verify, deploy]
 
 test:
-  stage: test
+  stage: verify
   tags: [k8s]
   variables:
     KUBERNETES_CPU_REQUEST: "4"
@@ -38,7 +41,7 @@ test:
     - node --test "integrations/tests/"*.test.mjs
 
 build-image:
-  stage: build
+  stage: verify
   tags: [k8s]
   rules:
     - if: '$CI_COMMIT_BRANCH == "main"'
