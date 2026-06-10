@@ -4,7 +4,8 @@
 // the record; this only governs TIMING (the Save Discipline's "hooks back-stop you").
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
+import { stateBase } from "./lib/state-paths.mjs";
 
 // --- config (per-install, env-overridable) ---
 export const NUDGE_ON = String(process.env.DAIMON_NUDGE || "on").toLowerCase() !== "off";
@@ -54,7 +55,7 @@ export function scanSignal(text) {
 // --- per-session state (hooks are separate processes; the counter must persist to disk) ---
 function statePath(sessionId) {
   const safe = String(sessionId || "default").replace(/[^a-zA-Z0-9_-]/g, "_");
-  const base = process.env.XDG_STATE_HOME || join(homedir(), ".local", "state");
+  const base = stateBase();
   try {
     const dir = join(base, "daimon-memory", "nudge");
     mkdirSync(dir, { recursive: true });

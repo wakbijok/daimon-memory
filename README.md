@@ -174,6 +174,15 @@ cargo run --bin daimon-mcp        # serves :8080  (/v1 + /mcp)
 cargo run --bin daimon-indexer    # outbox to Qdrant (separate process)
 ```
 
+### Platform support
+
+- **Linux / macOS** — fully supported; this is what we develop and run on.
+- **Windows** — supported via **Docker Desktop (WSL2)** for the server and **Git Bash** for the
+  client installers. CI runs the installers and hook tests on a `windows-latest` runner, but we
+  don't use Windows day-to-day — issue reports may take a round-trip to reproduce. Client state
+  lives under `%LOCALAPPDATA%\daimon-memory\` (or `$XDG_STATE_HOME` if set). Native PowerShell
+  installers are out of scope for now.
+
 ## Connect your tools
 
 Each client installer wires three things: **session-start** (persona + disciplines + recent context), **per-turn recall + save-nudge**, and **capture** (mirroring the tool's own memory and/or the guided tools).

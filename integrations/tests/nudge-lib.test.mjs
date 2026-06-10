@@ -65,11 +65,35 @@ test("decide: cadence nudge fires at exactly N quiet turns then resets", () => {
   assert.equal(st.quietTurns, 0, "counter resets after firing");
 });
 
+// --- state path resolution (issue #5/#8: %LOCALAPPDATA% on Windows, XDG elsewhere) ---
+const { stateBase } = await import(CC + "lib/state-paths.mjs");
+
+test("stateBase: XDG_STATE_HOME wins on every platform", () => {
+  const prev = process.env.XDG_STATE_HOME;
+  process.env.XDG_STATE_HOME = "/tmp/xdg-test";
+  try { assert.equal(stateBase(), "/tmp/xdg-test"); }
+  finally { prev === undefined ? delete process.env.XDG_STATE_HOME : process.env.XDG_STATE_HOME = prev; }
+});
+
+test("stateBase: platform fallback is LOCALAPPDATA on win32, ~/.local/state elsewhere", () => {
+  const prev = process.env.XDG_STATE_HOME;
+  delete process.env.XDG_STATE_HOME;
+  try {
+    const base = stateBase();
+    if (process.platform === "win32") {
+      assert.ok(/AppData[\\/]Local|%?LOCALAPPDATA/i.test(base) || base === process.env.LOCALAPPDATA,
+        `expected a LOCALAPPDATA-style path, got ${base}`);
+    } else {
+      assert.match(base, /\.local[\\/]state$/);
+    }
+  } finally { if (prev !== undefined) process.env.XDG_STATE_HOME = prev; }
+});
+
 // --- cross-copy parity: the genuinely shared scripts MUST stay byte-identical between
 // plugins. (session-start.mjs and mirror-memory.mjs are intentionally per-client and are
 // NOT listed here - Codex has no PreCompact hook and reads native memory from SQLite.)
 const SHARED = ["nudge-lib.mjs", "nudge.mjs", "auto-recall.mjs", "recall-state.mjs",
-  "lib/daimon.mjs"];
+  "lib/daimon.mjs", "lib/state-paths.mjs"];
 for (const f of SHARED) {
   test(`parity: ${f} identical across claude-code and codex`, () => {
     assert.equal(read(CC + f), read(CX + f), `${f} drifted between the two plugin copies`);
