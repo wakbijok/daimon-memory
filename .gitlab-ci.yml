@@ -1,15 +1,24 @@
-# CI for the STAGING remote (git.wakbijok.uk) - the branch the kaniko build Job actually
-# deploys from. Mirrors .github/workflows/ci.yml so deployed code is never untested code.
-# Requires a GitLab runner with the docker executor; if none is registered, register one or
-# this pipeline sits pending (delete this file if you never run GitLab CI).
+# CI for the STAGING remote (git.wakbijok.uk) - the branch the homelab deploys from.
+# Runs on the in-cluster k8s runner (tag: k8s): job pods are pinned to celebrimbor
+# (12-core bare-metal) and the build reuses the same kaniko registry cache as the manual
+# deploy/build-job.yaml, so warm builds are ~2-3 min, cold ~8-12.
+#
+# test mirrors .github/workflows/ci.yml so deployed code is never untested code.
+# build + deploy run on main only: kaniko pushes :latest + the Cargo version tag, then
+# the deploy stage rollout-restarts the :latest-tracking Deployments (the documented
+# ArgoCD-safe procedure) under the gitlab-runner-ci ServiceAccount (deployments-only Role).
 
-stages: [test]
+stages: [test, build, deploy]
 
 test:
   stage: test
-  image: rust:1
+  tags: [k8s]
   variables:
+    KUBERNETES_CPU_REQUEST: "4"
+    KUBERNETES_MEMORY_REQUEST: "4Gi"
+    KUBERNETES_MEMORY_LIMIT: "8Gi"
     CARGO_HOME: $CI_PROJECT_DIR/.cargo
+  image: rust:1
   cache:
     key: cargo-$CI_COMMIT_REF_SLUG
     paths:
@@ -27,3 +36,37 @@ test:
         echo '{}' | DAIMON_ENDPOINT=http://127.0.0.1:9 node "$f" >/dev/null
       done
     - node --test "integrations/tests/"*.test.mjs
+
+build-image:
+  stage: build
+  tags: [k8s]
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+  image:
+    name: gcr.io/kaniko-project/executor:debug
+    entrypoint: [""]
+  variables:
+    KUBERNETES_CPU_REQUEST: "4"
+    KUBERNETES_MEMORY_REQUEST: "6Gi"
+    KUBERNETES_MEMORY_LIMIT: "10Gi"
+  script:
+    - VERSION=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
+    - /kaniko/executor
+      --context "$CI_PROJECT_DIR"
+      --dockerfile Dockerfile
+      --destination glcr.wakbijok.uk/daimon/daimon-memory/daimon-mcp:latest
+      --destination "glcr.wakbijok.uk/daimon/daimon-memory/daimon-mcp:$VERSION"
+      --cache=true
+      --cache-repo=glcr.wakbijok.uk/daimon/daimon-memory/cache
+      --verbosity=info
+
+deploy:
+  stage: deploy
+  tags: [k8s]
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+  image: bitnami/kubectl:1.34
+  script:
+    - kubectl -n ai-workloads rollout restart deploy/daimon-mcp deploy/daimon-indexer
+    - kubectl -n ai-workloads rollout status deploy/daimon-mcp --timeout=300s
+    - kubectl -n ai-workloads rollout status deploy/daimon-indexer --timeout=300s
