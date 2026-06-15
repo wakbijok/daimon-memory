@@ -34,7 +34,7 @@ from agent.memory_provider import MemoryProvider
 logger = logging.getLogger(__name__)
 
 _DEFAULT_TENANT = "00000000-0000-0000-0000-0000000000d1"
-_DEFAULT_NAMESPACE = "agent/lessons"
+_DEFAULT_NAMESPACE = "agent/lessons"  # matches the installer prompt + daimon's user/resources/agent convention
 _RECALL_LIMIT = 6
 _HTTP_TIMEOUT = 6.0
 
@@ -55,7 +55,13 @@ _NUDGE_SIGNALS = [
 
 
 def _get_httpx():
-    """Lazy import so a missing dep degrades gracefully instead of breaking load."""
+    """Lazy import of httpx (a declared base dependency of this package).
+
+    The import is still guarded so a broken/partial environment degrades to "no recall"
+    instead of crashing plugin load. httpx is intentionally NOT an optional extra: recall
+    is the provider's core function, and a silent no-recall install is worse than pulling a
+    small dependency.
+    """
     try:
         import httpx  # type: ignore
 
@@ -99,8 +105,10 @@ DAIMON_REMEMBER_SCHEMA = {
             },
             "namespace": {
                 "type": "string",
-                "description": "Optional. Default per config (e.g. agent/lessons, "
-                "resources/<project> for project knowledge, or user/preferences for user rules).",
+                "description": "Optional. Choose by SUBJECT (priority user > resources > agent): "
+                "user/<area> for facts/preferences about the user (e.g. user/preferences); "
+                "resources/<project>/<area> for a named project/host (e.g. resources/homelab); "
+                "agent/<area> for the agent's own work (e.g. agent/lessons — the default).",
             },
             "tags": {"type": "array", "items": {"type": "string"}},
             "importance": {"type": "integer", "description": "0-100 rerank boost."},
@@ -243,6 +251,7 @@ class DaimonMemoryProvider(MemoryProvider):
         self._prefetch_lock = threading.Lock()
         self._prefetch_result = ""
         self._prefetch_thread: Optional[threading.Thread] = None
+        self._prefetch_token = 0  # monotonic; only the newest queued prefetch may commit
         # track in-flight write threads so on_session_end/shutdown can drain
         self._write_threads: List[threading.Thread] = []
 
@@ -290,12 +299,29 @@ class DaimonMemoryProvider(MemoryProvider):
         return (self._system_block + "\n\n" + tail) if self._system_block else tail
 
     def _load_system_block(self) -> str:
-        """Canonical persona + operating protocols from agent/persona + agent/protocol (full
-        bodies), loaded once per session and injected as the instruction layer (not user content)."""
+        """Canonical persona + operating protocols (full bodies), loaded once per
+        session and injected as the instruction layer (not user content).
+
+        Queries by ``kind`` (persona, protocol) — namespace-agnostic and
+        future-proof. The legacy ``shared-canonical/system`` namespace_prefix
+        approach broke when the v0.2 audit restructured namespaces and the
+        recall engine's hybrid search returned 0 hits for empty-query +
+        namespace_prefix (it needs a real query to rank; kind filtering does not).
+        """
         if not self._client:
             return ""
-        hits = self._client.recall("", namespace_prefix="agent/", limit=20)
-        wanted = [h for h in hits if h.get("kind") in ("persona", "protocol")]
+        hits: List[dict] = []
+        for kind in ("persona", "protocol"):
+            hits.extend(self._client.recall("", kind=kind, limit=10))
+        # Deduplicate by URI (a record may surface from either query).
+        seen: set = set()
+        deduped = []
+        for h in hits:
+            uri = h.get("uri", "")
+            if uri not in seen:
+                seen.add(uri)
+                deduped.append(h)
+        wanted = [h for h in deduped if h.get("kind") in ("persona", "protocol")]
         wanted.sort(key=lambda h: 0 if h.get("kind") == "persona" else 1)
         sections = []
         for h in wanted:
@@ -318,8 +344,10 @@ class DaimonMemoryProvider(MemoryProvider):
 
     def prefetch(self, query: str, *, session_id: str = "") -> str:
         # Return the background-fetched result if ready (don't block the turn).
-        if self._prefetch_thread and self._prefetch_thread.is_alive():
-            self._prefetch_thread.join(timeout=3.0)
+        with self._prefetch_lock:
+            t = self._prefetch_thread  # read the handle under the lock (it's swapped under it too)
+        if t and t.is_alive():
+            t.join(timeout=3.0)
         with self._prefetch_lock:
             result = self._prefetch_result
             self._prefetch_result = ""
@@ -332,15 +360,36 @@ class DaimonMemoryProvider(MemoryProvider):
     def queue_prefetch(self, query: str, *, session_id: str = "") -> None:
         if not self._client or not query.strip():
             return
+        with self._prefetch_lock:
+            self._prefetch_token += 1
+            token = self._prefetch_token
 
         def _work():
             hits = self._client.recall(query)
             with self._prefetch_lock:
-                self._prefetch_result = self._format_hits(hits)
+                # Only the most-recently-queued prefetch may commit. With on_turn_start's
+                # current-turn warm overlapping run_agent's end-of-turn next-turn warm, two
+                # _work threads can run at once; a slower/older one must not clobber the newer
+                # result (which would surface recall keyed to the wrong query).
+                if token == self._prefetch_token:
+                    self._prefetch_result = self._format_hits(hits)
 
         t = threading.Thread(target=_work, daemon=True)
-        self._prefetch_thread = t
+        with self._prefetch_lock:
+            self._prefetch_thread = t
         t.start()
+
+    def on_turn_start(self, turn_number: int, message: str, **kwargs) -> None:
+        # Warm recall for THIS turn's message. The turn prologue calls
+        # on_turn_start(turn, msg) immediately BEFORE prefetch_all() -> prefetch(),
+        # and prefetch() joins this background thread. Without this hook the ONLY
+        # warming is run_agent's END-of-turn queue_prefetch (for the NEXT turn), so
+        # the FIRST turn of a session reads an empty stash (no <memory-context>) and
+        # every later turn is keyed to the PREVIOUS message instead of the current
+        # one. _client is set in initialize() (agent init, before turn 1), so there
+        # is no None-race here (unlike get_tool_schemas, which runs pre-initialize).
+        if message and message.strip():
+            self.queue_prefetch(message, session_id=self._session_id)
 
     @staticmethod
     def _format_hits(hits: List[dict]) -> str:
@@ -398,6 +447,8 @@ class DaimonMemoryProvider(MemoryProvider):
         title = text.splitlines()[0][:120]
         payload = {
             "kind": "agent_lesson",
+            # Subject-keyed per daimon convention: a write ABOUT the user -> user/, else the
+            # agent's own captured note -> agent/. (Was the non-convention hermes-private/*.)
             "namespace": "user/preferences" if target == "user" else "agent/lessons",
             "title": title,
             "body": text,
