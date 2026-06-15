@@ -22,62 +22,17 @@ jobs:
       - name: Build (release binaries)
         run: cargo build --release --bin daimon-mcp --bin daimon-indexer --bin daimon
 
-  hooks-smoke:
+  # Hermes is the one client that stays in this repo (pip package under integrations/hermes).
+  # Claude Code + Codex plugins moved to github.com/wakbijok/daimon-memory-plugins (own CI).
+  hermes:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-python@v5
         with:
-          node-version: 22
-      - name: Hook scripts parse and exit 0 with no backend
+          python-version: "3.11"
+      - name: daimon-hermes provider + installer CLI tests
         run: |
-          for f in integrations/*/plugins/daimon-memory/scripts/*.mjs; do
-            node --check "$f"
-            echo '{}' | DAIMON_ENDPOINT=http://127.0.0.1:9 node "$f" >/dev/null
-          done
-      - name: Save-nudge unit tests + cross-copy parity
-        run: node --test "integrations/tests/"*.test.mjs
-      - name: Hermes provider compiles
-        run: python3 -m py_compile integrations/hermes/daimon/__init__.py
-
-  # Windows is Tier-2 (see README "Platform support"): server in Docker Desktop/WSL2,
-  # clients via Git Bash. This job is the Git Bash half — we develop on macOS/Linux, so
-  # this runner is the only place the installers meet MSYS sed, the py launcher, and
-  # Windows paths before a user does.
-  windows-smoke:
-    runs-on: windows-latest
-    defaults:
-      run:
-        shell: bash # Git Bash, same environment the client installers target
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - name: Hook scripts parse and exit 0 with no backend
-        run: |
-          for f in integrations/*/plugins/daimon-memory/scripts/*.mjs; do
-            node --check "$f"
-            echo '{}' | DAIMON_ENDPOINT=http://127.0.0.1:9 node "$f" >/dev/null
-          done
-      - name: Save-nudge unit tests + cross-copy parity + state paths
-        run: node --test "integrations/tests/"*.test.mjs
-      - name: Codex installer end-to-end under Git Bash (stubbed codex CLI)
-        run: |
-          mkdir -p "$HOME/.codex" stub
-          printf '#!/bin/sh\nexit 0\n' > stub/codex && chmod +x stub/codex
-          PATH="$PWD/stub:$PATH" bash integrations/codex/install.sh \
-            --endpoint http://localhost:9 --api-key smoke-test-key --yes
-          PLUGIN="$HOME/.codex/daimon-memory-marketplace/plugins/daimon-memory"
-          ! grep -q "__DAIMON" "$PLUGIN/hooks/hooks.json"
-          ! grep -q "__DAIMON" "$PLUGIN/.mcp.json"
-          grep -q "smoke-test-key" "$PLUGIN/.mcp.json"
-          node -e "JSON.parse(require('fs').readFileSync(process.argv[1],'utf8'))" \
-            "$PLUGIN/scripts/lib/daimon.config.json"
-      - name: Hermes installer under Git Bash (stubbed hermes CLI)
-        run: |
-          mkdir -p "$HOME/.hermes" stub
-          printf '#!/bin/sh\nexit 0\n' > stub/hermes && chmod +x stub/hermes
-          PATH="$PWD/stub:$PATH" bash integrations/hermes/install.sh \
-            --endpoint http://localhost:9 --no-activate --yes
-          grep -q "^DAIMON_ENDPOINT=" "$HOME/.hermes/.env"
+          cd integrations/hermes
+          python tests/test_provider.py
+          python tests/test_cli.py

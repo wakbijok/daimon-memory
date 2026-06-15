@@ -28,17 +28,11 @@ test:
       - .cargo/registry
       - target
   before_script:
-    - apt-get update && apt-get install -y --no-install-recommends cmake protobuf-compiler nodejs
+    - apt-get update && apt-get install -y --no-install-recommends cmake protobuf-compiler
   script:
     - cargo test --workspace --locked
-    # hook scripts must at least parse + exit 0 with no backend (a broken hook kills
-    # every client session start). No `command -v` guard: a missing node must FAIL, not skip.
-    - |
-      for f in integrations/*/plugins/daimon-memory/scripts/*.mjs; do
-        node --check "$f"
-        echo '{}' | DAIMON_ENDPOINT=http://127.0.0.1:9 node "$f" >/dev/null
-      done
-    - node --test "integrations/tests/"*.test.mjs
+    # Client plugin tests (Claude Code + Codex hooks) moved to their own repo's CI:
+    # github.com/wakbijok/daimon-memory-plugins
 
 build-image:
   stage: verify

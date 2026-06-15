@@ -89,11 +89,10 @@ Everything beyond the smoke test lives at **[wakbijok.uk/man/daimon-memory](http
 
 ## Integrations
 
-daimon-memory works with Claude Code, Codex, and Hermes today. Each integration ships its own installer under `integrations/<tool>/install.sh`.
+daimon-memory works with Claude Code, Codex, and Hermes today.
 
-A few things worth knowing before you wire them up:
-
-- **Claude Code plugin** requires a local absolute path for the marketplace add step: the installer prints the exact command (`/plugin marketplace add <abs-path>/integrations/claude-code`).
+- **Claude Code + Codex** plugins live in their own marketplace repo: **[wakbijok/daimon-memory-plugins](https://github.com/wakbijok/daimon-memory-plugins)** -- `/plugin marketplace add wakbijok/daimon-memory-plugins`.
+- **Hermes** ships as a pip package in this repo under `integrations/hermes` (`pip install daimon-hermes && daimon-hermes setup`).
 - **MCP endpoint** (`/mcp`) speaks the synchronous JSON-RPC subset of MCP, not streamable-HTTP/SSE. Hosts that require SSE can use the REST hooks at `/v1` instead.
 - Memories live in daimon independently of any tool, so uninstalling a tool never deletes your data.
 
