@@ -44,7 +44,15 @@ build-image:
   stage: verify
   tags: [k8s]
   rules:
+    # Only rebuild the SERVER image when server code/build inputs change — a client
+    # integrations/ or docs-only change must not trigger a server rebuild (and so can't
+    # be blocked by registry/build issues unrelated to it). test still runs on every push.
     - if: '$CI_COMMIT_BRANCH == "main"'
+      changes:
+        - "crates/**/*"
+        - "Cargo.toml"
+        - "Cargo.lock"
+        - "Dockerfile"
   image:
     name: gcr.io/kaniko-project/executor:debug
     entrypoint: [""]
@@ -67,7 +75,13 @@ deploy:
   stage: deploy
   tags: [k8s]
   rules:
+    # Redeploy only when a new server image was built (same paths as build-image).
     - if: '$CI_COMMIT_BRANCH == "main"'
+      changes:
+        - "crates/**/*"
+        - "Cargo.toml"
+        - "Cargo.lock"
+        - "Dockerfile"
   # alpine/k8s: kubectl + a shell (GitLab CI job images need sh; rancher/kubectl is
   # binary-only, bitnami/kubectl is gone from Docker Hub).
   image: alpine/k8s:1.34.6
