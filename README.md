@@ -4,9 +4,19 @@
 
 **Persistent typed memory for AI agents. Deterministic, LLM-free recall across every tool.**
 
-![status](https://img.shields.io/badge/status-experimental-orange) ![license](https://img.shields.io/badge/license-MIT-blue) ![rust](https://img.shields.io/badge/rust-edition%202024-orange)
+![status](https://img.shields.io/badge/status-status%20quo-lightgrey) ![license](https://img.shields.io/badge/license-MIT-blue) ![rust](https://img.shields.io/badge/rust-edition%202024-orange)
 
 </div>
+
+---
+
+## Project status
+
+**Status quo.** daimon-memory is not receiving primary development focus right now.
+
+Its successor is **[dm-lite](https://github.com/wakbijok/dm-lite)** (daimon-memory v2): one binary, hybrid keyword + vector recall, and the shared memory engine for Hermes, Codex, Claude Code, and other agents. New AI memory work is focused there.
+
+The future of this repository is undecided. It remains available and usable as documented below. If you are starting fresh, prefer dm-lite.
 
 ---
 
